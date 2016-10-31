@@ -1,24 +1,36 @@
 from rest_framework import serializers
 
 from dcim.api.serializers import SiteNestedSerializer, InterfaceNestedSerializer
-from ipam.models import VRF, Role, RIR, Aggregate, Prefix, IPAddress, VLAN
+from extras.api.serializers import CustomFieldSerializer
+from ipam.models import VRF, Role, RIR, Aggregate, Prefix, IPAddress, VLAN, VLANGroup
+from tenancy.api.serializers import TenantNestedSerializer
 
 
 #
 # VRFs
 #
 
-class VRFSerializer(serializers.ModelSerializer):
+class VRFSerializer(CustomFieldSerializer, serializers.ModelSerializer):
+    tenant = TenantNestedSerializer()
 
     class Meta:
         model = VRF
-        fields = ['id', 'name', 'rd', 'description']
+        fields = ['id', 'name', 'rd', 'tenant', 'enforce_unique', 'description', 'custom_fields']
 
 
 class VRFNestedSerializer(VRFSerializer):
 
     class Meta(VRFSerializer.Meta):
         fields = ['id', 'name', 'rd']
+
+
+class VRFTenantSerializer(VRFSerializer):
+    """
+    Include tenant serializer. Useful for determining tenant inheritance for Prefixes and IPAddresses.
+    """
+
+    class Meta(VRFSerializer.Meta):
+        fields = ['id', 'name', 'rd', 'tenant']
 
 
 #
@@ -59,12 +71,12 @@ class RIRNestedSerializer(RIRSerializer):
 # Aggregates
 #
 
-class AggregateSerializer(serializers.ModelSerializer):
+class AggregateSerializer(CustomFieldSerializer, serializers.ModelSerializer):
     rir = RIRNestedSerializer()
 
     class Meta:
         model = Aggregate
-        fields = ['id', 'family', 'prefix', 'rir', 'date_added', 'description']
+        fields = ['id', 'family', 'prefix', 'rir', 'date_added', 'description', 'custom_fields']
 
 
 class AggregateNestedSerializer(AggregateSerializer):
@@ -74,16 +86,37 @@ class AggregateNestedSerializer(AggregateSerializer):
 
 
 #
+# VLAN groups
+#
+
+class VLANGroupSerializer(serializers.ModelSerializer):
+    site = SiteNestedSerializer()
+
+    class Meta:
+        model = VLANGroup
+        fields = ['id', 'name', 'slug', 'site']
+
+
+class VLANGroupNestedSerializer(VLANGroupSerializer):
+
+    class Meta(VLANGroupSerializer.Meta):
+        fields = ['id', 'name', 'slug']
+
+
+#
 # VLANs
 #
 
-class VLANSerializer(serializers.ModelSerializer):
+class VLANSerializer(CustomFieldSerializer, serializers.ModelSerializer):
     site = SiteNestedSerializer()
+    group = VLANGroupNestedSerializer()
+    tenant = TenantNestedSerializer()
     role = RoleNestedSerializer()
 
     class Meta:
         model = VLAN
-        fields = ['id', 'site', 'vid', 'name', 'status', 'role', 'display_name']
+        fields = ['id', 'site', 'group', 'vid', 'name', 'tenant', 'status', 'role', 'description', 'display_name',
+                  'custom_fields']
 
 
 class VLANNestedSerializer(VLANSerializer):
@@ -96,15 +129,17 @@ class VLANNestedSerializer(VLANSerializer):
 # Prefixes
 #
 
-class PrefixSerializer(serializers.ModelSerializer):
+class PrefixSerializer(CustomFieldSerializer, serializers.ModelSerializer):
     site = SiteNestedSerializer()
-    vrf = VRFNestedSerializer()
+    vrf = VRFTenantSerializer()
+    tenant = TenantNestedSerializer()
     vlan = VLANNestedSerializer()
     role = RoleNestedSerializer()
 
     class Meta:
         model = Prefix
-        fields = ['id', 'family', 'prefix', 'site', 'vrf', 'vlan', 'status', 'role', 'description']
+        fields = ['id', 'family', 'prefix', 'site', 'vrf', 'tenant', 'vlan', 'status', 'role', 'description',
+                  'custom_fields']
 
 
 class PrefixNestedSerializer(PrefixSerializer):
@@ -117,13 +152,15 @@ class PrefixNestedSerializer(PrefixSerializer):
 # IP addresses
 #
 
-class IPAddressSerializer(serializers.ModelSerializer):
-    vrf = VRFNestedSerializer()
+class IPAddressSerializer(CustomFieldSerializer, serializers.ModelSerializer):
+    vrf = VRFTenantSerializer()
+    tenant = TenantNestedSerializer()
     interface = InterfaceNestedSerializer()
 
     class Meta:
         model = IPAddress
-        fields = ['id', 'family', 'address', 'vrf', 'interface', 'description', 'nat_inside', 'nat_outside']
+        fields = ['id', 'family', 'address', 'vrf', 'tenant', 'status', 'interface', 'description', 'nat_inside',
+                  'nat_outside', 'custom_fields']
 
 
 class IPAddressNestedSerializer(IPAddressSerializer):

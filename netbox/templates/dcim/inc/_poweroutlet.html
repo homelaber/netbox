@@ -1,4 +1,9 @@
 <tr{% if po.connected_port and not po.connected_port.connection_status %} class="info"{% endif %}>
+    {% if selectable and perms.dcim.delete_poweroutlet %}
+        <td class="pk">
+            <input name="pk" type="checkbox" value="{{ po.pk }}" />
+        </td>
+    {% endif %}
     <td>
         <i class="fa fa-fw fa-bolt"></i> {{ po.name }}
     </td>
@@ -10,7 +15,9 @@
             {{ po.connected_port.name }}
         </td>
     {% else %}
-        <td colspan="2">Not connected</td>
+        <td colspan="2">
+            <span class="text-muted">Not connected</span>
+        </td>
     {% endif %}
     <td class="text-right">
         {% if perms.dcim.change_poweroutlet %}

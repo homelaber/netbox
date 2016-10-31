@@ -2,8 +2,10 @@ from django import forms
 from django.db.models import Count
 
 from dcim.models import Site, Device, Interface, Rack, IFACE_FF_VIRTUAL
+from extras.forms import CustomFieldForm, CustomFieldBulkEditForm, CustomFieldFilterForm
+from tenancy.models import Tenant
 from utilities.forms import (
-    APISelect, BootstrapMixin, BulkImportForm, CommentField, ConfirmationForm, CSVDataField, Livesearch, SmallTextarea,
+    APISelect, BootstrapMixin, BulkImportForm, CommentField, CSVDataField, FilterChoiceField, Livesearch, SmallTextarea,
     SlugField,
 )
 
@@ -14,7 +16,7 @@ from .models import Circuit, CircuitType, Provider
 # Providers
 #
 
-class ProviderForm(forms.ModelForm, BootstrapMixin):
+class ProviderForm(BootstrapMixin, CustomFieldForm):
     slug = SlugField()
     comments = CommentField()
 
@@ -45,7 +47,7 @@ class ProviderImportForm(BulkImportForm, BootstrapMixin):
     csv = CSVDataField(csv_form=ProviderFromCSVForm)
 
 
-class ProviderBulkEditForm(forms.Form, BootstrapMixin):
+class ProviderBulkEditForm(BootstrapMixin, CustomFieldBulkEditForm):
     pk = forms.ModelMultipleChoiceField(queryset=Provider.objects.all(), widget=forms.MultipleHiddenInput)
     asn = forms.IntegerField(required=False, label='ASN')
     account = forms.CharField(max_length=30, required=False, label='Account number')
@@ -54,9 +56,13 @@ class ProviderBulkEditForm(forms.Form, BootstrapMixin):
     admin_contact = forms.CharField(required=False, widget=SmallTextarea, label='Admin contact')
     comments = CommentField()
 
+    class Meta:
+        nullable_fields = ['asn', 'account', 'portal_url', 'noc_contact', 'admin_contact', 'comments']
 
-class ProviderBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=Provider.objects.all(), widget=forms.MultipleHiddenInput)
+
+class ProviderFilterForm(BootstrapMixin, CustomFieldFilterForm):
+    model = Provider
+    site = FilterChoiceField(queryset=Site.objects.all(), to_field_name='slug')
 
 
 #
@@ -71,22 +77,18 @@ class CircuitTypeForm(forms.ModelForm, BootstrapMixin):
         fields = ['name', 'slug']
 
 
-class CircuitTypeBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=CircuitType.objects.all(), widget=forms.MultipleHiddenInput)
-
-
 #
 # Circuits
 #
 
-class CircuitForm(forms.ModelForm, BootstrapMixin):
+class CircuitForm(BootstrapMixin, CustomFieldForm):
     site = forms.ModelChoiceField(queryset=Site.objects.all(), widget=forms.Select(attrs={'filter-for': 'rack'}))
     rack = forms.ModelChoiceField(queryset=Rack.objects.all(), required=False, label='Rack',
                                   widget=APISelect(api_url='/api/dcim/racks/?site_id={{site}}',
                                                    attrs={'filter-for': 'device'}))
     device = forms.ModelChoiceField(queryset=Device.objects.all(), required=False, label='Device',
                                     widget=APISelect(api_url='/api/dcim/devices/?rack_id={{rack}}',
-                                                     attrs={'filter-for': 'interface'}))
+                                                     display_field='display_name', attrs={'filter-for': 'interface'}))
     livesearch = forms.CharField(required=False, label='Device', widget=Livesearch(
         query_key='q', query_url='dcim-api:device_list', field_to_update='device')
     )
@@ -98,8 +100,8 @@ class CircuitForm(forms.ModelForm, BootstrapMixin):
     class Meta:
         model = Circuit
         fields = [
-            'cid', 'type', 'provider', 'site', 'rack', 'device', 'livesearch', 'interface', 'install_date',
-            'port_speed', 'commit_rate', 'xconnect_id', 'pp_info', 'comments'
+            'cid', 'type', 'provider', 'tenant', 'site', 'rack', 'device', 'livesearch', 'interface', 'install_date',
+            'port_speed', 'upstream_speed', 'commit_rate', 'xconnect_id', 'pp_info', 'comments'
         ]
         help_texts = {
             'cid': "Unique circuit ID",
@@ -159,50 +161,40 @@ class CircuitFromCSVForm(forms.ModelForm):
                                       error_messages={'invalid_choice': 'Provider not found.'})
     type = forms.ModelChoiceField(CircuitType.objects.all(), to_field_name='name',
                                   error_messages={'invalid_choice': 'Invalid circuit type.'})
+    tenant = forms.ModelChoiceField(Tenant.objects.all(), to_field_name='name', required=False,
+                                    error_messages={'invalid_choice': 'Tenant not found.'})
     site = forms.ModelChoiceField(Site.objects.all(), to_field_name='name',
                                   error_messages={'invalid_choice': 'Site not found.'})
 
     class Meta:
         model = Circuit
-        fields = ['cid', 'provider', 'type', 'site', 'install_date', 'port_speed', 'commit_rate', 'xconnect_id',
-                  'pp_info']
+        fields = ['cid', 'provider', 'type', 'tenant', 'site', 'install_date', 'port_speed', 'upstream_speed',
+                  'commit_rate', 'xconnect_id', 'pp_info']
 
 
 class CircuitImportForm(BulkImportForm, BootstrapMixin):
     csv = CSVDataField(csv_form=CircuitFromCSVForm)
 
 
-class CircuitBulkEditForm(forms.Form, BootstrapMixin):
+class CircuitBulkEditForm(BootstrapMixin, CustomFieldBulkEditForm):
     pk = forms.ModelMultipleChoiceField(queryset=Circuit.objects.all(), widget=forms.MultipleHiddenInput)
     type = forms.ModelChoiceField(queryset=CircuitType.objects.all(), required=False)
     provider = forms.ModelChoiceField(queryset=Provider.objects.all(), required=False)
+    tenant = forms.ModelChoiceField(queryset=Tenant.objects.all(), required=False)
     port_speed = forms.IntegerField(required=False, label='Port speed (Kbps)')
     commit_rate = forms.IntegerField(required=False, label='Commit rate (Kbps)')
     comments = CommentField()
 
-
-class CircuitBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=Circuit.objects.all(), widget=forms.MultipleHiddenInput)
-
-
-def circuit_type_choices():
-    type_choices = CircuitType.objects.annotate(circuit_count=Count('circuits'))
-    return [(t.slug, '{} ({})'.format(t.name, t.circuit_count)) for t in type_choices]
+    class Meta:
+        nullable_fields = ['tenant', 'port_speed', 'commit_rate', 'comments']
 
 
-def circuit_provider_choices():
-    provider_choices = Provider.objects.annotate(circuit_count=Count('circuits'))
-    return [(p.slug, '{} ({})'.format(p.name, p.circuit_count)) for p in provider_choices]
-
-
-def circuit_site_choices():
-    site_choices = Site.objects.annotate(circuit_count=Count('circuits'))
-    return [(s.slug, '{} ({})'.format(s.name, s.circuit_count)) for s in site_choices]
-
-
-class CircuitFilterForm(forms.Form, BootstrapMixin):
-    type = forms.MultipleChoiceField(required=False, choices=circuit_type_choices)
-    provider = forms.MultipleChoiceField(required=False, choices=circuit_provider_choices,
-                                         widget=forms.SelectMultiple(attrs={'size': 8}))
-    site = forms.MultipleChoiceField(required=False, choices=circuit_site_choices,
-                                     widget=forms.SelectMultiple(attrs={'size': 8}))
+class CircuitFilterForm(BootstrapMixin, CustomFieldFilterForm):
+    model = Circuit
+    type = FilterChoiceField(queryset=CircuitType.objects.annotate(filter_count=Count('circuits')),
+                             to_field_name='slug')
+    provider = FilterChoiceField(queryset=Provider.objects.annotate(filter_count=Count('circuits')),
+                                 to_field_name='slug')
+    tenant = FilterChoiceField(queryset=Tenant.objects.annotate(filter_count=Count('circuits')), to_field_name='slug',
+                               null_option=(0, 'None'))
+    site = FilterChoiceField(queryset=Site.objects.annotate(filter_count=Count('circuits')), to_field_name='slug')

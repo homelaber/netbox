@@ -2,6 +2,7 @@ from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.db.models import Count
 from django.shortcuts import get_object_or_404, render
 
+from extras.models import Graph, GRAPH_TYPE_PROVIDER
 from utilities.views import (
     BulkDeleteView, BulkEditView, BulkImportView, ObjectDeleteView, ObjectEditView, ObjectListView,
 )
@@ -16,6 +17,8 @@ from .models import Circuit, CircuitType, Provider
 
 class ProviderListView(ObjectListView):
     queryset = Provider.objects.annotate(count_circuits=Count('circuits'))
+    filter = filters.ProviderFilter
+    filter_form = forms.ProviderFilterForm
     table = tables.ProviderTable
     edit_permissions = ['circuits.change_provider', 'circuits.delete_provider']
     template_name = 'circuits/provider_list.html'
@@ -25,10 +28,12 @@ def provider(request, slug):
 
     provider = get_object_or_404(Provider, slug=slug)
     circuits = Circuit.objects.filter(provider=provider).select_related('site', 'interface__device')
+    show_graphs = Graph.objects.filter(type=GRAPH_TYPE_PROVIDER).exists()
 
     return render(request, 'circuits/provider.html', {
         'provider': provider,
         'circuits': circuits,
+        'show_graphs': show_graphs,
     })
 
 
@@ -61,20 +66,10 @@ class ProviderBulkEditView(PermissionRequiredMixin, BulkEditView):
     template_name = 'circuits/provider_bulk_edit.html'
     default_redirect_url = 'circuits:provider_list'
 
-    def update_objects(self, pk_list, form):
-
-        fields_to_update = {}
-        for field in ['asn', 'account', 'portal_url', 'noc_contact', 'admin_contact', 'comments']:
-            if form.cleaned_data[field]:
-                fields_to_update[field] = form.cleaned_data[field]
-
-        return self.cls.objects.filter(pk__in=pk_list).update(**fields_to_update)
-
 
 class ProviderBulkDeleteView(PermissionRequiredMixin, BulkDeleteView):
     permission_required = 'circuits.delete_provider'
     cls = Provider
-    form = forms.ProviderBulkDeleteForm
     default_redirect_url = 'circuits:provider_list'
 
 
@@ -100,7 +95,6 @@ class CircuitTypeEditView(PermissionRequiredMixin, ObjectEditView):
 class CircuitTypeBulkDeleteView(PermissionRequiredMixin, BulkDeleteView):
     permission_required = 'circuits.delete_circuittype'
     cls = CircuitType
-    form = forms.CircuitTypeBulkDeleteForm
     default_redirect_url = 'circuits:circuittype_list'
 
 
@@ -109,7 +103,7 @@ class CircuitTypeBulkDeleteView(PermissionRequiredMixin, BulkDeleteView):
 #
 
 class CircuitListView(ObjectListView):
-    queryset = Circuit.objects.select_related('provider', 'type', 'site')
+    queryset = Circuit.objects.select_related('provider', 'type', 'tenant', 'site')
     filter = filters.CircuitFilter
     filter_form = forms.CircuitFilterForm
     table = tables.CircuitTable
@@ -156,18 +150,8 @@ class CircuitBulkEditView(PermissionRequiredMixin, BulkEditView):
     template_name = 'circuits/circuit_bulk_edit.html'
     default_redirect_url = 'circuits:circuit_list'
 
-    def update_objects(self, pk_list, form):
-
-        fields_to_update = {}
-        for field in ['type', 'provider', 'port_speed', 'commit_rate', 'comments']:
-            if form.cleaned_data[field]:
-                fields_to_update[field] = form.cleaned_data[field]
-
-        return self.cls.objects.filter(pk__in=pk_list).update(**fields_to_update)
-
 
 class CircuitBulkDeleteView(PermissionRequiredMixin, BulkDeleteView):
     permission_required = 'circuits.delete_circuit'
     cls = Circuit
-    form = forms.CircuitBulkDeleteForm
     default_redirect_url = 'circuits:circuit_list'

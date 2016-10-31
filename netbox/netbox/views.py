@@ -1,23 +1,24 @@
-from markdown import markdown
+import sys
 
-from django.conf import settings
-from django.http import Http404
 from django.shortcuts import render
-from django.utils.safestring import mark_safe
 
 from circuits.models import Provider, Circuit
 from dcim.models import Site, Rack, Device, ConsolePort, PowerPort, InterfaceConnection
 from extras.models import UserAction
-from ipam.models import Aggregate, Prefix, IPAddress, VLAN
+from ipam.models import Aggregate, Prefix, IPAddress, VLAN, VRF
 from secrets.models import Secret
+from tenancy.models import Tenant
 
 
 def home(request):
 
     stats = {
 
-        # DCIM
+        # Organization
         'site_count': Site.objects.count(),
+        'tenant_count': Tenant.objects.count(),
+
+        # DCIM
         'rack_count': Rack.objects.count(),
         'device_count': Device.objects.count(),
         'interface_connections_count': InterfaceConnection.objects.count(),
@@ -25,6 +26,7 @@ def home(request):
         'power_connections_count': PowerPort.objects.filter(power_outlet__isnull=False).count(),
 
         # IPAM
+        'vrf_count': VRF.objects.count(),
         'aggregate_count': Aggregate.objects.count(),
         'prefix_count': Prefix.objects.count(),
         'ipaddress_count': IPAddress.objects.count(),
@@ -41,31 +43,24 @@ def home(request):
 
     return render(request, 'home.html', {
         'stats': stats,
-        'recent_activity': UserAction.objects.all()[:15]
+        'recent_activity': UserAction.objects.select_related('user')[:50]
     })
 
 
-def docs(request, path):
+def handle_500(request):
     """
-    Display a page of Markdown-formatted documentation.
+    Custom server error handler
     """
-    filename = '{}/docs/{}.md'.format(settings.BASE_DIR.rsplit('/', 1)[0], path)
-    try:
-        with open(filename, 'r') as docfile:
-            markup = docfile.read()
-    except:
-        raise Http404
-
-    content = mark_safe(markdown(markup, extensions=['mdx_gfm', 'toc']))
-
-    return render(request, 'docs.html', {
-        'content': content,
-        'path': path,
-    })
+    type_, error, traceback = sys.exc_info()
+    return render(request, '500.html', {
+        'exception': str(type_),
+        'error': error,
+    }, status=500)
 
 
 def trigger_500(request):
-    """Hot-wired method of triggering a server error to test reporting."""
-
+    """
+    Hot-wired method of triggering a server error to test reporting
+    """
     raise Exception("Congratulations, you've triggered an exception! Go tell all your friends what an exceptional "
                     "person you are.")

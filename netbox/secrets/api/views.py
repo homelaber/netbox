@@ -4,6 +4,7 @@ from django.shortcuts import get_object_or_404
 
 from rest_framework import generics
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
@@ -27,6 +28,7 @@ class SecretRoleListView(generics.ListAPIView):
     """
     queryset = SecretRole.objects.all()
     serializer_class = serializers.SecretRoleSerializer
+    permission_classes = [IsAuthenticated]
 
 
 class SecretRoleDetailView(generics.RetrieveAPIView):
@@ -35,23 +37,25 @@ class SecretRoleDetailView(generics.RetrieveAPIView):
     """
     queryset = SecretRole.objects.all()
     serializer_class = serializers.SecretRoleSerializer
+    permission_classes = [IsAuthenticated]
 
 
 class SecretListView(generics.GenericAPIView):
     """
     List secrets (filterable). If a private key is POSTed, attempt to decrypt each Secret.
     """
-    queryset = Secret.objects.select_related('device__primary_ip', 'role')\
+    queryset = Secret.objects.select_related('device__primary_ip4', 'device__primary_ip6', 'role')\
         .prefetch_related('role__users', 'role__groups')
     serializer_class = serializers.SecretSerializer
     filter_class = SecretFilter
     renderer_classes = [FormlessBrowsableAPIRenderer, JSONRenderer, FreeRADIUSClientsRenderer]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, private_key=None):
         queryset = self.filter_queryset(self.get_queryset())
 
         # Attempt to decrypt each Secret if a private key was provided.
-        if private_key is not None:
+        if private_key:
             try:
                 uk = UserKey.objects.get(user=request.user)
             except UserKey.DoesNotExist:
@@ -86,16 +90,17 @@ class SecretDetailView(generics.GenericAPIView):
     """
     Retrieve a single Secret. If a private key is POSTed, attempt to decrypt the Secret.
     """
-    queryset = Secret.objects.select_related('device__primary_ip', 'role')\
+    queryset = Secret.objects.select_related('device__primary_ip4', 'device__primary_ip6', 'role')\
         .prefetch_related('role__users', 'role__groups')
     serializer_class = serializers.SecretSerializer
     renderer_classes = [FormlessBrowsableAPIRenderer, JSONRenderer, FreeRADIUSClientsRenderer]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, private_key=None):
         secret = get_object_or_404(Secret, pk=pk)
 
         # Attempt to decrypt the Secret if a private key was provided.
-        if private_key is not None:
+        if private_key:
             try:
                 uk = UserKey.objects.get(user=request.user)
             except UserKey.DoesNotExist:
@@ -108,14 +113,15 @@ class SecretDetailView(generics.GenericAPIView):
                     {'error': ERR_USERKEY_INACTIVE},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            if secret.decryptable_by(request.user):
-                master_key = uk.get_master_key(private_key)
-                if master_key is None:
-                    return Response(
-                        {'error': ERR_PRIVKEY_INVALID},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                secret.decrypt(master_key)
+            if not secret.decryptable_by(request.user):
+                raise PermissionDenied(detail="You do not have permission to decrypt this secret.")
+            master_key = uk.get_master_key(private_key)
+            if master_key is None:
+                return Response(
+                    {'error': ERR_PRIVKEY_INVALID},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            secret.decrypt(master_key)
 
         serializer = self.get_serializer(secret)
         return Response(serializer.data)

@@ -37,7 +37,6 @@ class SecretRoleEditView(PermissionRequiredMixin, ObjectEditView):
 class SecretRoleBulkDeleteView(PermissionRequiredMixin, BulkDeleteView):
     permission_required = 'secrets.delete_secretrole'
     cls = SecretRole
-    form = forms.SecretRoleBulkDeleteForm
     default_redirect_url = 'secrets:secretrole_list'
 
 
@@ -93,7 +92,7 @@ def secret_add(request, pk):
 
                 messages.success(request, "Added new secret: {0}".format(secret))
                 if '_addanother' in request.POST:
-                    return redirect('secrets:secret_add')
+                    return redirect('dcim:device_addsecret', pk=device.pk)
                 else:
                     return redirect('secrets:secret', pk=secret.pk)
 
@@ -206,18 +205,8 @@ class SecretBulkEditView(PermissionRequiredMixin, BulkEditView):
     template_name = 'secrets/secret_bulk_edit.html'
     default_redirect_url = 'secrets:secret_list'
 
-    def update_objects(self, pk_list, form):
-
-        fields_to_update = {}
-        for field in ['role', 'name']:
-            if form.cleaned_data[field]:
-                fields_to_update[field] = form.cleaned_data[field]
-
-        return self.cls.objects.filter(pk__in=pk_list).update(**fields_to_update)
-
 
 class SecretBulkDeleteView(PermissionRequiredMixin, BulkDeleteView):
     permission_required = 'secrets.delete_secret'
     cls = Secret
-    form = forms.SecretBulkDeleteForm
     default_redirect_url = 'secrets:secret_list'

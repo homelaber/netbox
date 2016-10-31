@@ -10,31 +10,35 @@ $(document).ready(function() {
             $('#privkey_modal').modal('show');
         } else {
             unlock_secret(secret_id, private_key);
-            $(this).hide();
-            $(this).siblings('button.lock-secret').show();
         }
     });
 
     // Locking a secret
     $('button.lock-secret').click(function (event) {
         var secret_id = $(this).attr('secret-id');
-        $('#secret_' + secret_id).html('********');
+        var secret_div = $('#secret_' + secret_id);
+
+        // Delete the plaintext
+        secret_div.html('********');
         $(this).hide();
         $(this).siblings('button.unlock-secret').show();
     });
 
     // Adding/editing a secret
-    $('form.requires-private-key').submit(function(event) {
+    private_key_field = $('#id_private_key');
+    private_key_field.parents('form').submit(function(event) {
+        console.log("form submitted");
         var private_key = sessionStorage.getItem('private_key');
         if (private_key) {
-            $('#id_private_key').val(private_key);
-        } else {
+            private_key_field.val(private_key);
+        } else if ($('form .requires-private-key:first').val()) {
+            console.log("we need a key!");
             $('#privkey_modal').modal('show');
             return false;
         }
     });
 
-    // Prompt the user to enter a private RSA key for decryption
+    // Saving a private RSA key locally
     $('#submit_privkey').click(function() {
         var private_key = $('#user_privkey').val();
         sessionStorage.setItem('private_key', private_key);
@@ -81,13 +85,16 @@ $(document).ready(function() {
                 xhr.setRequestHeader("X-CSRFToken", csrf_token);
             },
             success: function (response, status) {
-                var secret_plaintext = response.plaintext;
-                $('#secret_' + secret_id).html(secret_plaintext);
-                return true;
+                $('#secret_' + secret_id).html(response.plaintext);
+                $('button.unlock-secret[secret-id=' + secret_id + ']').hide();
+                $('button.lock-secret[secret-id=' + secret_id + ']').show();
             },
             error: function (xhr, ajaxOptions, thrownError) {
                 if (xhr.status == 403) {
-                    alert("Decryption failed: " + xhr.statusText);
+                    alert("Permission denied");
+                } else {
+                    var json = jQuery.parseJSON(xhr.responseText);
+                    alert("Decryption failed: " + json['error']);
                 }
             }
         });

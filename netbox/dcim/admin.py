@@ -2,9 +2,9 @@ from django.contrib import admin
 from django.db.models import Count
 
 from .models import (
-    ConsolePort, ConsolePortTemplate, ConsoleServerPort, ConsoleServerPortTemplate, Device, DeviceRole, DeviceType,
-    Interface, InterfaceTemplate, Manufacturer, Module, Platform, PowerOutlet, PowerOutletTemplate, PowerPort,
-    PowerPortTemplate, Rack, RackGroup, Site,
+    ConsolePort, ConsolePortTemplate, ConsoleServerPort, ConsoleServerPortTemplate, Device, DeviceBay,
+    DeviceBayTemplate, DeviceRole, DeviceType, Interface, InterfaceTemplate, Manufacturer, Module, Platform,
+    PowerOutlet, PowerOutletTemplate, PowerPort, PowerPortTemplate, Rack, RackGroup, RackRole, Site,
 )
 
 
@@ -24,9 +24,17 @@ class RackGroupAdmin(admin.ModelAdmin):
     }
 
 
+@admin.register(RackRole)
+class RackRoleAdmin(admin.ModelAdmin):
+    list_display = ['name', 'slug', 'color']
+    prepopulated_fields = {
+        'slug': ['name'],
+    }
+
+
 @admin.register(Rack)
 class RackAdmin(admin.ModelAdmin):
-    list_display = ['name', 'facility_id', 'site', 'u_height']
+    list_display = ['name', 'facility_id', 'site', 'group', 'tenant', 'role', 'type', 'width', 'u_height']
 
 
 #
@@ -61,6 +69,10 @@ class InterfaceTemplateAdmin(admin.TabularInline):
     model = InterfaceTemplate
 
 
+class DeviceBayTemplateAdmin(admin.TabularInline):
+    model = DeviceBayTemplate
+
+
 @admin.register(DeviceType)
 class DeviceTypeAdmin(admin.ModelAdmin):
     prepopulated_fields = {
@@ -72,9 +84,10 @@ class DeviceTypeAdmin(admin.ModelAdmin):
         PowerPortTemplateAdmin,
         PowerOutletTemplateAdmin,
         InterfaceTemplateAdmin,
+        DeviceBayTemplateAdmin,
     ]
-    list_display = ['model', 'manufacturer', 'slug', 'u_height', 'console_ports', 'console_server_ports', 'power_ports',
-                    'power_outlets', 'interfaces']
+    list_display = ['model', 'manufacturer', 'slug', 'part_number', 'u_height', 'console_ports', 'console_server_ports',
+                    'power_ports', 'power_outlets', 'interfaces', 'device_bays']
     list_filter = ['manufacturer']
 
     def get_queryset(self, request):
@@ -84,6 +97,7 @@ class DeviceTypeAdmin(admin.ModelAdmin):
             power_port_count=Count('power_port_templates', distinct=True),
             power_outlet_count=Count('power_outlet_templates', distinct=True),
             interface_count=Count('interface_templates', distinct=True),
+            devicebay_count=Count('device_bay_templates', distinct=True),
         )
 
     def console_ports(self, instance):
@@ -100,6 +114,9 @@ class DeviceTypeAdmin(admin.ModelAdmin):
 
     def interfaces(self, instance):
         return instance.interface_count
+
+    def device_bays(self, instance):
+        return instance.devicebay_count
 
 
 #
@@ -144,6 +161,12 @@ class InterfaceAdmin(admin.TabularInline):
     model = Interface
 
 
+class DeviceBayAdmin(admin.TabularInline):
+    model = DeviceBay
+    fk_name = 'device'
+    readonly_fields = ['installed_device']
+
+
 class ModuleAdmin(admin.TabularInline):
     model = Module
     readonly_fields = ['parent', 'discovered']
@@ -157,11 +180,13 @@ class DeviceAdmin(admin.ModelAdmin):
         PowerPortAdmin,
         PowerOutletAdmin,
         InterfaceAdmin,
+        DeviceBayAdmin,
         ModuleAdmin,
     ]
-    list_display = ['display_name', 'device_type', 'device_role', 'primary_ip', 'rack', 'position', 'serial']
+    list_display = ['display_name', 'device_type', 'device_role', 'primary_ip', 'rack', 'position', 'asset_tag',
+                    'serial']
     list_filter = ['device_role']
 
     def get_queryset(self, request):
         qs = super(DeviceAdmin, self).get_queryset(request)
-        return qs.select_related('device_type__manufacturer', 'device_role', 'primary_ip', 'rack')
+        return qs.select_related('device_type__manufacturer', 'device_role', 'primary_ip4', 'primary_ip6', 'rack')

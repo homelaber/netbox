@@ -2,16 +2,30 @@ import django_filters
 
 from django.db.models import Q
 
+from extras.filters import CustomFieldFilterSet
+from tenancy.models import Tenant
+from utilities.filters import NullableModelMultipleChoiceFilter
 from .models import (
     ConsolePort, ConsoleServerPort, Device, DeviceRole, DeviceType, Interface, InterfaceConnection, Manufacturer,
-    Platform, PowerOutlet, PowerPort, Rack, RackGroup, Site,
+    Platform, PowerOutlet, PowerPort, Rack, RackGroup, RackRole, Site,
 )
 
 
-class SiteFilter(django_filters.FilterSet):
+class SiteFilter(CustomFieldFilterSet, django_filters.FilterSet):
     q = django_filters.MethodFilter(
         action='search',
         label='Search',
+    )
+    tenant_id = NullableModelMultipleChoiceFilter(
+        name='tenant',
+        queryset=Tenant.objects.all(),
+        label='Tenant (ID)',
+    )
+    tenant = NullableModelMultipleChoiceFilter(
+        name='tenant',
+        queryset=Tenant.objects.all(),
+        to_field_name='slug',
+        label='Tenant (slug)',
     )
 
     class Meta:
@@ -19,11 +33,10 @@ class SiteFilter(django_filters.FilterSet):
         fields = ['q', 'name', 'facility', 'asn']
 
     def search(self, queryset, value):
-        value = value.strip()
         qs_filter = Q(name__icontains=value) | Q(facility__icontains=value) | Q(physical_address__icontains=value) | \
-            Q(shipping_address__icontains=value)
+            Q(shipping_address__icontains=value) | Q(comments__icontains=value)
         try:
-            qs_filter |= Q(asn=int(value))
+            qs_filter |= Q(asn=int(value.strip()))
         except ValueError:
             pass
         return queryset.filter(qs_filter)
@@ -47,7 +60,7 @@ class RackGroupFilter(django_filters.FilterSet):
         fields = ['site_id', 'site']
 
 
-class RackFilter(django_filters.FilterSet):
+class RackFilter(CustomFieldFilterSet, django_filters.FilterSet):
     q = django_filters.MethodFilter(
         action='search',
         label='Search',
@@ -63,16 +76,38 @@ class RackFilter(django_filters.FilterSet):
         to_field_name='slug',
         label='Site (slug)',
     )
-    group_id = django_filters.ModelMultipleChoiceFilter(
+    group_id = NullableModelMultipleChoiceFilter(
         name='group',
         queryset=RackGroup.objects.all(),
         label='Group (ID)',
     )
-    group = django_filters.ModelMultipleChoiceFilter(
+    group = NullableModelMultipleChoiceFilter(
         name='group',
         queryset=RackGroup.objects.all(),
         to_field_name='slug',
         label='Group',
+    )
+    tenant_id = NullableModelMultipleChoiceFilter(
+        name='tenant',
+        queryset=Tenant.objects.all(),
+        label='Tenant (ID)',
+    )
+    tenant = NullableModelMultipleChoiceFilter(
+        name='tenant',
+        queryset=Tenant.objects.all(),
+        to_field_name='slug',
+        label='Tenant (slug)',
+    )
+    role_id = NullableModelMultipleChoiceFilter(
+        name='role',
+        queryset=RackRole.objects.all(),
+        label='Role (ID)',
+    )
+    role = NullableModelMultipleChoiceFilter(
+        name='role',
+        queryset=RackRole.objects.all(),
+        to_field_name='slug',
+        label='Role (slug)',
     )
 
     class Meta:
@@ -80,10 +115,10 @@ class RackFilter(django_filters.FilterSet):
         fields = ['q', 'site_id', 'site', 'u_height']
 
     def search(self, queryset, value):
-        value = value.strip()
         return queryset.filter(
             Q(name__icontains=value) |
-            Q(facility_id__icontains=value)
+            Q(facility_id__icontains=value) |
+            Q(comments__icontains=value)
         )
 
 
@@ -102,11 +137,11 @@ class DeviceTypeFilter(django_filters.FilterSet):
 
     class Meta:
         model = DeviceType
-        fields = ['manufacturer_id', 'manufacturer', 'model', 'u_height', 'is_console_server', 'is_pdu',
+        fields = ['manufacturer_id', 'manufacturer', 'model', 'part_number', 'u_height', 'is_console_server', 'is_pdu',
                   'is_network_device']
 
 
-class DeviceFilter(django_filters.FilterSet):
+class DeviceFilter(CustomFieldFilterSet, django_filters.FilterSet):
     q = django_filters.MethodFilter(
         action='search',
         label='Search',
@@ -121,6 +156,11 @@ class DeviceFilter(django_filters.FilterSet):
         queryset=Site.objects.all(),
         to_field_name='slug',
         label='Site name (slug)',
+    )
+    rack_group_id = django_filters.ModelMultipleChoiceFilter(
+        name='rack__group',
+        queryset=RackGroup.objects.all(),
+        label='Rack group (ID)',
     )
     rack_id = django_filters.ModelMultipleChoiceFilter(
         name='rack',
@@ -137,6 +177,17 @@ class DeviceFilter(django_filters.FilterSet):
         queryset=DeviceRole.objects.all(),
         to_field_name='slug',
         label='Role (slug)',
+    )
+    tenant_id = NullableModelMultipleChoiceFilter(
+        name='tenant',
+        queryset=Tenant.objects.all(),
+        label='Tenant (ID)',
+    )
+    tenant = NullableModelMultipleChoiceFilter(
+        name='tenant',
+        queryset=Tenant.objects.all(),
+        to_field_name='slug',
+        label='Tenant (slug)',
     )
     device_type_id = django_filters.ModelMultipleChoiceFilter(
         name='device_type',
@@ -160,12 +211,12 @@ class DeviceFilter(django_filters.FilterSet):
         to_field_name='slug',
         label='Device model (slug)',
     )
-    platform_id = django_filters.ModelMultipleChoiceFilter(
+    platform_id = NullableModelMultipleChoiceFilter(
         name='platform',
         queryset=Platform.objects.all(),
         label='Platform (ID)',
     )
-    platform = django_filters.ModelMultipleChoiceFilter(
+    platform = NullableModelMultipleChoiceFilter(
         name='platform',
         queryset=Platform.objects.all(),
         to_field_name='slug',
@@ -190,16 +241,17 @@ class DeviceFilter(django_filters.FilterSet):
 
     class Meta:
         model = Device
-        fields = ['q', 'name', 'site_id', 'site', 'rack_id', 'role_id', 'role', 'device_type_id', 'manufacturer_id',
-                  'manufacturer', 'model', 'platform_id', 'platform', 'status', 'is_console_server', 'is_pdu',
-                  'is_network_device']
+        fields = ['q', 'name', 'serial', 'asset_tag', 'site_id', 'site', 'rack_id', 'role_id', 'role', 'device_type_id',
+                  'manufacturer_id', 'manufacturer', 'model', 'platform_id', 'platform', 'status', 'is_console_server',
+                  'is_pdu', 'is_network_device']
 
     def search(self, queryset, value):
-        value = value.strip()
         return queryset.filter(
             Q(name__icontains=value) |
-            Q(serial__icontains=value) |
-            Q(modules__serial__icontains=value)
+            Q(serial__icontains=value.strip()) |
+            Q(modules__serial__icontains=value.strip()) |
+            Q(asset_tag=value.strip()) |
+            Q(comments__icontains=value)
         ).distinct()
 
 

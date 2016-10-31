@@ -1,9 +1,17 @@
 <tr{% if iface.connection and not iface.connection.connection_status %} class="info"{% endif %}>
+    {% if selectable and perms.dcim.delete_interface %}
+        <td class="pk">
+            <input name="pk" type="checkbox" value="{{ iface.pk }}" />
+        </td>
+    {% endif %}
     <td>
         <i class="fa fa-fw fa-{{ icon|default:"exchange" }}"></i> <span title="{{ iface.get_form_factor_display }}">{{ iface.name }}</span>
         {% if iface.description %}
             <i class="fa fa-fw fa-comment-o" title="{{ iface.description }}"></i>
         {% endif %}
+    </td>
+    <td>
+        <small>{{ iface.mac_address|default:'' }}</small>
     </td>
     {% if not iface.is_physical %}
         <td colspan="2">Virtual</td>
@@ -21,13 +29,17 @@
             <a href="{% url 'circuits:circuit' pk=iface.circuit.pk %}">{{ iface.circuit }}</a>
         </td>
     {% else %}
-        <td colspan="2">Not connected</td>
+        <td colspan="2">
+            <span class="text-muted">Not connected</span>
+        </td>
     {% endif %}
     <td class="text-right">
-        {% if iface.circuit or iface.connection %}
-            <button type="button" class="btn btn-primary btn-xs" data-toggle="modal" data-target="#graphs_modal" data-obj="{{ device.name }} - {{ iface.name }}" data-url="{% url 'dcim-api:interface_graphs' pk=iface.pk %}" title="Show graphs">
-                <i class="glyphicon glyphicon-signal" aria-hidden="true"></i>
-            </button>
+        {% if show_graphs %}
+            {% if iface.circuit or iface.connection %}
+                <button type="button" class="btn btn-primary btn-xs" data-toggle="modal" data-target="#graphs_modal" data-obj="{{ device.name }} - {{ iface.name }}" data-url="{% url 'dcim-api:interface_graphs' pk=iface.pk %}" title="Show graphs">
+                    <i class="glyphicon glyphicon-signal" aria-hidden="true"></i>
+                </button>
+            {% endif %}
         {% endif %}
         {% if perms.dcim.change_interface %}
             {% if iface.is_physical %}
@@ -42,6 +54,10 @@
                         </a>
                     {% endif %}
                     <a href="{% url 'dcim:interfaceconnection_delete' pk=iface.connection.pk %}?device={{ device.pk }}" class="btn btn-danger btn-xs" title="Delete connection">
+                        <i class="glyphicon glyphicon-remove" aria-hidden="true"></i>
+                    </a>
+                {% elif iface.circuit and perms.circuits.change_circuit %}
+                    <a href="{% url 'circuits:circuit_edit' pk=iface.circuit.pk %}" class="btn btn-danger btn-xs" title="Edit circuit">
                         <i class="glyphicon glyphicon-remove" aria-hidden="true"></i>
                     </a>
                 {% else %}

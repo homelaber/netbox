@@ -1,3 +1,4 @@
+import logging
 import os
 import socket
 
@@ -11,7 +12,7 @@ except ImportError:
                                "the documentation.")
 
 
-VERSION = '1.0.8-dev'
+VERSION = '1.6.4-dev'
 
 # Import local configuration
 for setting in ['ALLOWED_HOSTS', 'DATABASE', 'SECRET_KEY']:
@@ -26,6 +27,9 @@ ADMINS = getattr(configuration, 'ADMINS', [])
 DEBUG = getattr(configuration, 'DEBUG', False)
 EMAIL = getattr(configuration, 'EMAIL', {})
 LOGIN_REQUIRED = getattr(configuration, 'LOGIN_REQUIRED', False)
+BASE_PATH = getattr(configuration, 'BASE_PATH', '')
+if BASE_PATH:
+    BASE_PATH = BASE_PATH.strip('/') + '/'  # Enforce trailing slash only
 MAINTENANCE_MODE = getattr(configuration, 'MAINTENANCE_MODE', False)
 PAGINATE_COUNT = getattr(configuration, 'PAGINATE_COUNT', 50)
 NETBOX_USERNAME = getattr(configuration, 'NETBOX_USERNAME', '')
@@ -37,7 +41,40 @@ TIME_FORMAT = getattr(configuration, 'TIME_FORMAT', 'g:i a')
 SHORT_TIME_FORMAT = getattr(configuration, 'SHORT_TIME_FORMAT', 'H:i:s')
 DATETIME_FORMAT = getattr(configuration, 'DATETIME_FORMAT', 'N j, Y g:i a')
 SHORT_DATETIME_FORMAT = getattr(configuration, 'SHORT_DATETIME_FORMAT', 'Y-m-d H:i')
+BANNER_TOP = getattr(configuration, 'BANNER_TOP', False)
+BANNER_BOTTOM = getattr(configuration, 'BANNER_BOTTOM', False)
+PREFER_IPV4 = getattr(configuration, 'PREFER_IPV4', False)
+ENFORCE_GLOBAL_UNIQUE = getattr(configuration, 'ENFORCE_GLOBAL_UNIQUE', False)
 CSRF_TRUSTED_ORIGINS = ALLOWED_HOSTS
+
+# Attempt to import LDAP configuration if it has been defined
+LDAP_IGNORE_CERT_ERRORS = False
+try:
+    from ldap_config import *
+    LDAP_CONFIGURED = True
+except ImportError:
+    LDAP_CONFIGURED = False
+
+# LDAP configuration (optional)
+if LDAP_CONFIGURED:
+    try:
+        import ldap
+        import django_auth_ldap
+        # Prepend LDAPBackend to the default ModelBackend
+        AUTHENTICATION_BACKENDS = [
+            'django_auth_ldap.backend.LDAPBackend',
+            'django.contrib.auth.backends.ModelBackend',
+        ]
+        # Optionally disable strict certificate checking
+        if LDAP_IGNORE_CERT_ERRORS:
+            ldap.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
+        # Enable logging for django_auth_ldap
+        logger = logging.getLogger('django_auth_ldap')
+        logger.addHandler(logging.StreamHandler())
+        logger.setLevel(logging.DEBUG)
+    except ImportError:
+        raise ImproperlyConfigured("LDAP authentication has been configured, but django-auth-ldap is not installed. "
+                                   "You can remove netbox/ldap_config.py to disable LDAP.")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -74,6 +111,7 @@ INSTALLED_APPS = (
     'ipam',
     'extras',
     'secrets',
+    'tenancy',
     'users',
     'utilities',
 )
@@ -105,7 +143,6 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'utilities.context_processors.settings',
-                'django.core.context_processors.request',
             ],
         },
     },
@@ -125,10 +162,13 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/1.8/howto/static-files/
 STATIC_ROOT = BASE_DIR + '/static/'
-STATIC_URL = '/static/'
+STATIC_URL = '/{}static/'.format(BASE_PATH)
 STATICFILES_DIRS = (
     os.path.join(BASE_DIR, "project-static"),
 )
+
+# Disable default limit of 1000 fields per request. Needed for bulk deletion of objects. (Added in Django 1.10.)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = None
 
 # Messages
 MESSAGE_TAGS = {
@@ -136,9 +176,7 @@ MESSAGE_TAGS = {
 }
 
 # Authentication URLs
-LOGIN_URL = '/login/'
-LOGIN_REDIRECT_URL = '/'
-LOGOUT_URL = '/logout/'
+LOGIN_URL = '/{}login/'.format(BASE_PATH)
 
 # Secrets
 SECRETS_MIN_PUBKEY_SIZE = 2048
