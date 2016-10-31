@@ -7,6 +7,7 @@
         <div class="panel-body">
             {% render_field form.name %}
             {% render_field form.device_role %}
+            {% render_field form.tenant %}
         </div>
     </div>
     <div class="panel panel-default">
@@ -15,6 +16,7 @@
             {% render_field form.manufacturer %}
             {% render_field form.device_type %}
             {% render_field form.serial %}
+            {% render_field form.asset_tag %}
         </div>
     </div>
     <div class="panel panel-default">
@@ -22,8 +24,32 @@
         <div class="panel-body">
             {% render_field form.site %}
             {% render_field form.rack %}
-            {% render_field form.face %}
-            {% render_field form.position %}
+            {% if obj.device_type.is_child_device and obj.parent_bay %}
+                <div class="form-group">
+                    <label class="col-md-3 control-label">Parent device</label>
+                    <div class="col-md-9">
+                        <p class="form-control-static">
+                            <a href="{% url 'dcim:device' pk=obj.parent_bay.device.pk %}">{{ obj.parent_bay.device }}</a>
+                        </p>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="col-md-3 control-label">Parent bay</label>
+                    <div class="col-md-9">
+                        <p class="form-control-static">
+                            {{ obj.parent_bay.name }}
+                            {% if perms.dcim.change_devicebay %}
+                                <a href="{% url 'dcim:devicebay_depopulate' pk=obj.parent_bay.pk %}" class="btn btn-danger btn-xs">
+                                    <i class="glyphicon glyphicon-remove" aria-hidden="true" title="Remove device"></i> Remove
+                                </a>
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+            {% elif not obj.device_type.is_child_device %}
+                {% render_field form.face %}
+                {% render_field form.position %}
+            {% endif %}
         </div>
     </div>
     <div class="panel panel-default">
@@ -31,9 +57,20 @@
         <div class="panel-body">
             {% render_field form.platform %}
             {% render_field form.status %}
-            {% if obj %}{% render_field form.primary_ip %}{% endif %}
+            {% if obj %}
+                {% render_field form.primary_ip4 %}
+                {% render_field form.primary_ip6 %}
+            {% endif %}
         </div>
     </div>
+    {% if form.custom_fields %}
+        <div class="panel panel-default">
+            <div class="panel-heading"><strong>Custom Fields</strong></div>
+            <div class="panel-body">
+                {% render_custom_fields form %}
+            </div>
+        </div>
+    {% endif %}
     <div class="panel panel-default">
         <div class="panel-heading"><strong>Comments</strong></div>
         <div class="panel-body">

@@ -1,15 +1,43 @@
 from collections import OrderedDict
 
-from django.core.exceptions import ValidationError
+from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericRelation
+from django.core.exceptions import MultipleObjectsReturned, ValidationError
 from django.core.urlresolvers import reverse
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import Q, ObjectDoesNotExist
+from django.db.models import Count, Q, ObjectDoesNotExist
 
+from extras.models import CustomFieldModel, CustomField, CustomFieldValue
 from extras.rpc import RPC_CLIENTS
+from tenancy.models import Tenant
 from utilities.fields import NullableCharField
+from utilities.managers import NaturalOrderByManager
 from utilities.models import CreatedUpdatedModel
 
+from .fields import ASNField, MACAddressField
+
+
+RACK_TYPE_2POST = 100
+RACK_TYPE_4POST = 200
+RACK_TYPE_CABINET = 300
+RACK_TYPE_WALLFRAME = 1000
+RACK_TYPE_WALLCABINET = 1100
+RACK_TYPE_CHOICES = (
+    (RACK_TYPE_2POST, '2-post frame'),
+    (RACK_TYPE_4POST, '4-post frame'),
+    (RACK_TYPE_CABINET, '4-post cabinet'),
+    (RACK_TYPE_WALLFRAME, 'Wall-mounted frame'),
+    (RACK_TYPE_WALLCABINET, 'Wall-mounted cabinet'),
+)
+
+RACK_WIDTH_19IN = 19
+RACK_WIDTH_23IN = 23
+RACK_WIDTH_CHOICES = (
+    (RACK_WIDTH_19IN, '19 inches'),
+    (RACK_WIDTH_23IN, '23 inches'),
+)
 
 RACK_FACE_FRONT = 0
 RACK_FACE_REAR = 1
@@ -17,6 +45,14 @@ RACK_FACE_CHOICES = [
     [RACK_FACE_FRONT, 'Front'],
     [RACK_FACE_REAR, 'Rear'],
 ]
+
+SUBDEVICE_ROLE_PARENT = True
+SUBDEVICE_ROLE_CHILD = False
+SUBDEVICE_ROLE_CHOICES = (
+    (None, 'None'),
+    (SUBDEVICE_ROLE_PARENT, 'Parent'),
+    (SUBDEVICE_ROLE_CHILD, 'Child'),
+)
 
 COLOR_TEAL = 'teal'
 COLOR_GREEN = 'green'
@@ -28,7 +64,7 @@ COLOR_RED = 'red'
 COLOR_GRAY1 = 'light_gray'
 COLOR_GRAY2 = 'medium_gray'
 COLOR_GRAY3 = 'dark_gray'
-DEVICE_ROLE_COLOR_CHOICES = [
+ROLE_COLOR_CHOICES = [
     [COLOR_TEAL, 'Teal'],
     [COLOR_GREEN, 'Green'],
     [COLOR_BLUE, 'Blue'],
@@ -41,23 +77,101 @@ DEVICE_ROLE_COLOR_CHOICES = [
     [COLOR_GRAY3, 'Dark Gray'],
 ]
 
+# Virtual
 IFACE_FF_VIRTUAL = 0
-IFACE_FF_100M_COPPER = 800
-IFACE_FF_1GE_COPPER = 1000
-IFACE_FF_SFP = 1100
-IFACE_FF_10GE_COPPER = 1150
-IFACE_FF_SFP_PLUS = 1200
-IFACE_FF_XFP = 1300
-IFACE_FF_QSFP_PLUS = 1400
+# Ethernet
+IFACE_FF_100ME_FIXED = 800
+IFACE_FF_1GE_FIXED = 1000
+IFACE_FF_1GE_GBIC = 1050
+IFACE_FF_1GE_SFP = 1100
+IFACE_FF_10GE_FIXED = 1150
+IFACE_FF_10GE_SFP_PLUS = 1200
+IFACE_FF_10GE_XFP = 1300
+IFACE_FF_10GE_XENPAK = 1310
+IFACE_FF_10GE_X2 = 1320
+IFACE_FF_25GE_SFP28 = 1350
+IFACE_FF_40GE_QSFP_PLUS = 1400
+IFACE_FF_100GE_CFP = 1500
+IFACE_FF_100GE_QSFP28 = 1600
+# Fibrechannel
+IFACE_FF_1GFC_SFP = 3010
+IFACE_FF_2GFC_SFP = 3020
+IFACE_FF_4GFC_SFP = 3040
+IFACE_FF_8GFC_SFP_PLUS = 3080
+IFACE_FF_16GFC_SFP_PLUS = 3160
+# Serial
+IFACE_FF_T1 = 4000
+IFACE_FF_E1 = 4010
+IFACE_FF_T3 = 4040
+IFACE_FF_E3 = 4050
+# Stacking
+IFACE_FF_STACKWISE = 5000
+IFACE_FF_STACKWISE_PLUS = 5050
+# Other
+IFACE_FF_OTHER = 32767
+
 IFACE_FF_CHOICES = [
-    [IFACE_FF_VIRTUAL, 'Virtual'],
-    [IFACE_FF_100M_COPPER, '10/100M (100BASE-TX)'],
-    [IFACE_FF_1GE_COPPER, '1GE (1000BASE-T)'],
-    [IFACE_FF_SFP, '1GE (SFP)'],
-    [IFACE_FF_10GE_COPPER, '10GE (10GBASE-T)'],
-    [IFACE_FF_SFP_PLUS, '10GE (SFP+)'],
-    [IFACE_FF_XFP, '10GE (XFP)'],
-    [IFACE_FF_QSFP_PLUS, '40GE (QSFP+)'],
+    [
+        'Virtual interfaces',
+        [
+            [IFACE_FF_VIRTUAL, 'Virtual'],
+        ]
+    ],
+    [
+        'Ethernet (fixed)',
+        [
+            [IFACE_FF_100ME_FIXED, '100BASE-TX (10/100ME)'],
+            [IFACE_FF_1GE_FIXED, '1000BASE-T (1GE)'],
+            [IFACE_FF_10GE_FIXED, '10GBASE-T (10GE)'],
+        ]
+    ],
+    [
+        'Ethernet (modular)',
+        [
+            [IFACE_FF_1GE_GBIC, 'GBIC (1GE)'],
+            [IFACE_FF_1GE_SFP, 'SFP (1GE)'],
+            [IFACE_FF_10GE_SFP_PLUS, 'SFP+ (10GE)'],
+            [IFACE_FF_10GE_XFP, 'XFP (10GE)'],
+            [IFACE_FF_10GE_XENPAK, 'XENPAK (10GE)'],
+            [IFACE_FF_10GE_X2, 'X2 (10GE)'],
+            [IFACE_FF_25GE_SFP28, 'SFP28 (25GE)'],
+            [IFACE_FF_40GE_QSFP_PLUS, 'QSFP+ (40GE)'],
+            [IFACE_FF_100GE_CFP, 'CFP (100GE)'],
+            [IFACE_FF_100GE_QSFP28, 'QSFP28 (100GE)'],
+        ]
+    ],
+    [
+        'FibreChannel',
+        [
+            [IFACE_FF_1GFC_SFP, 'SFP (1GFC)'],
+            [IFACE_FF_2GFC_SFP, 'SFP (2GFC)'],
+            [IFACE_FF_4GFC_SFP, 'SFP (4GFC)'],
+            [IFACE_FF_8GFC_SFP_PLUS, 'SFP+ (8GFC)'],
+            [IFACE_FF_16GFC_SFP_PLUS, 'SFP+ (16GFC)'],
+        ]
+    ],
+    [
+        'Serial',
+        [
+            [IFACE_FF_T1, 'T1 (1.544 Mbps)'],
+            [IFACE_FF_E1, 'E1 (2.048 Mbps)'],
+            [IFACE_FF_T3, 'T3 (45 Mbps)'],
+            [IFACE_FF_E3, 'E3 (34 Mbps)'],
+        ]
+    ],
+    [
+        'Stacking',
+        [
+            [IFACE_FF_STACKWISE, 'Cisco StackWise'],
+            [IFACE_FF_STACKWISE_PLUS, 'Cisco StackWise Plus'],
+        ]
+    ],
+    [
+        'Other',
+        [
+            [IFACE_FF_OTHER, 'Other'],
+        ]
+    ],
 ]
 
 STATUS_ACTIVE = True
@@ -127,18 +241,32 @@ def order_interfaces(queryset, sql_col, primary_ordering=tuple()):
     }).order_by(*ordering)
 
 
-class Site(CreatedUpdatedModel):
+#
+# Sites
+#
+
+class SiteManager(NaturalOrderByManager):
+
+    def get_queryset(self):
+        return self.natural_order_by('name')
+
+
+class Site(CreatedUpdatedModel, CustomFieldModel):
     """
     A Site represents a geographic location within a network; typically a building or campus. The optional facility
     field can be used to include an external designation, such as a data center name (e.g. Equinix SV6).
     """
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(unique=True)
+    tenant = models.ForeignKey(Tenant, blank=True, null=True, related_name='sites', on_delete=models.PROTECT)
     facility = models.CharField(max_length=50, blank=True)
-    asn = models.PositiveIntegerField(blank=True, null=True, verbose_name='ASN')
+    asn = ASNField(blank=True, null=True, verbose_name='ASN')
     physical_address = models.CharField(max_length=200, blank=True)
     shipping_address = models.CharField(max_length=200, blank=True)
     comments = models.TextField(blank=True)
+    custom_field_values = GenericRelation(CustomFieldValue, content_type_field='obj_type', object_id_field='obj_id')
+
+    objects = SiteManager()
 
     class Meta:
         ordering = ['name']
@@ -153,6 +281,7 @@ class Site(CreatedUpdatedModel):
         return ','.join([
             self.name,
             self.slug,
+            self.tenant.name if self.tenant else '',
             self.facility,
             str(self.asn),
         ])
@@ -178,6 +307,10 @@ class Site(CreatedUpdatedModel):
         return self.circuits.count()
 
 
+#
+# Racks
+#
+
 class RackGroup(models.Model):
     """
     Racks can be grouped as subsets within a Site. The scope of a group will depend on how Sites are defined. For
@@ -196,13 +329,37 @@ class RackGroup(models.Model):
         ]
 
     def __unicode__(self):
-        return '{} - {}'.format(self.site.name, self.name)
+        return u'{} - {}'.format(self.site.name, self.name)
 
     def get_absolute_url(self):
         return "{}?group_id={}".format(reverse('dcim:rack_list'), self.pk)
 
 
-class Rack(CreatedUpdatedModel):
+class RackRole(models.Model):
+    """
+    Racks can be organized by functional role, similar to Devices.
+    """
+    name = models.CharField(max_length=50, unique=True)
+    slug = models.SlugField(unique=True)
+    color = models.CharField(max_length=30, choices=ROLE_COLOR_CHOICES)
+
+    class Meta:
+        ordering = ['name']
+
+    def __unicode__(self):
+        return self.name
+
+    def get_absolute_url(self):
+        return "{}?role={}".format(reverse('dcim:rack_list'), self.slug)
+
+
+class RackManager(NaturalOrderByManager):
+
+    def get_queryset(self):
+        return self.natural_order_by('site__name', 'name')
+
+
+class Rack(CreatedUpdatedModel, CustomFieldModel):
     """
     Devices are housed within Racks. Each rack has a defined height measured in rack units, and a front and rear face.
     Each Rack is assigned to a Site and (optionally) a RackGroup.
@@ -211,8 +368,17 @@ class Rack(CreatedUpdatedModel):
     facility_id = NullableCharField(max_length=30, blank=True, null=True, verbose_name='Facility ID')
     site = models.ForeignKey('Site', related_name='racks', on_delete=models.PROTECT)
     group = models.ForeignKey('RackGroup', related_name='racks', blank=True, null=True, on_delete=models.SET_NULL)
-    u_height = models.PositiveSmallIntegerField(default=42, verbose_name='Height (U)')
+    tenant = models.ForeignKey(Tenant, blank=True, null=True, related_name='racks', on_delete=models.PROTECT)
+    role = models.ForeignKey('RackRole', related_name='racks', blank=True, null=True, on_delete=models.PROTECT)
+    type = models.PositiveSmallIntegerField(choices=RACK_TYPE_CHOICES, blank=True, null=True, verbose_name='Type')
+    width = models.PositiveSmallIntegerField(choices=RACK_WIDTH_CHOICES, default=RACK_WIDTH_19IN, verbose_name='Width',
+                                             help_text='Rail-to-rail width')
+    u_height = models.PositiveSmallIntegerField(default=42, verbose_name='Height (U)',
+                                                validators=[MinValueValidator(1), MaxValueValidator(100)])
     comments = models.TextField(blank=True)
+    custom_field_values = GenericRelation(CustomFieldValue, content_type_field='obj_type', object_id_field='obj_id')
+
+    objects = RackManager()
 
     class Meta:
         ordering = ['site', 'name']
@@ -244,6 +410,10 @@ class Rack(CreatedUpdatedModel):
             self.group.name if self.group else '',
             self.name,
             self.facility_id or '',
+            self.tenant.name if self.tenant else '',
+            self.role.name if self.role else '',
+            self.get_type_display() if self.type else '',
+            str(self.width),
             str(self.u_height),
         ])
 
@@ -254,7 +424,7 @@ class Rack(CreatedUpdatedModel):
     @property
     def display_name(self):
         if self.facility_id:
-            return "{} ({})".format(self.name, self.facility_id)
+            return u"{} ({})".format(self.name, self.facility_id)
         return self.name
 
     def get_rack_units(self, face=RACK_FACE_FRONT, exclude=None, remove_redundant=False):
@@ -274,6 +444,7 @@ class Rack(CreatedUpdatedModel):
         # Add devices to rack units list
         if self.pk:
             for device in Device.objects.select_related('device_type__manufacturer', 'device_role')\
+                    .annotate(devicebay_count=Count('device_bays'))\
                     .exclude(pk=exclude)\
                     .filter(rack=self, position__gt=0)\
                     .filter(Q(face=face) | Q(device_type__is_full_depth=True)):
@@ -331,6 +502,15 @@ class Rack(CreatedUpdatedModel):
     def get_0u_devices(self):
         return self.devices.filter(position=0)
 
+    def get_utilization(self):
+        """
+        Determine the utilization rate of the rack and return it as a percentage.
+        """
+        if self.u_consumed is None:
+                self.u_consumed = 0
+        u_available = self.u_height - self.u_consumed
+        return int(float(self.u_height - u_available) / self.u_height * 100)
+
 
 #
 # Device Types
@@ -371,6 +551,7 @@ class DeviceType(models.Model):
     manufacturer = models.ForeignKey('Manufacturer', related_name='device_types', on_delete=models.PROTECT)
     model = models.CharField(max_length=50)
     slug = models.SlugField()
+    part_number = models.CharField(max_length=50, blank=True, help_text="Discrete part number (optional)")
     u_height = models.PositiveSmallIntegerField(verbose_name='Height (U)', default=1)
     is_full_depth = models.BooleanField(default=True, verbose_name="Is full depth",
                                         help_text="Device consumes both front and rear rack faces")
@@ -380,6 +561,10 @@ class DeviceType(models.Model):
                                  help_text="This type of device has power outlets")
     is_network_device = models.BooleanField(default=True, verbose_name='Is a network device',
                                             help_text="This type of device has network interfaces")
+    subdevice_role = models.NullBooleanField(default=None, verbose_name='Parent/child status',
+                                             choices=SUBDEVICE_ROLE_CHOICES,
+                                             help_text="Parent devices house child devices in device bays. Select "
+                                                       "\"None\" if this device type is neither a parent nor a child.")
 
     class Meta:
         ordering = ['manufacturer', 'model']
@@ -389,10 +574,57 @@ class DeviceType(models.Model):
         ]
 
     def __unicode__(self):
-        return "{0} {1}".format(self.manufacturer, self.model)
+        return u'{} {}'.format(self.manufacturer, self.model)
+
+    def __init__(self, *args, **kwargs):
+        super(DeviceType, self).__init__(*args, **kwargs)
+
+        # Save a copy of u_height for validation in clean()
+        self._original_u_height = self.u_height
 
     def get_absolute_url(self):
         return reverse('dcim:devicetype', args=[self.pk])
+
+    def clean(self):
+
+        # If editing an existing DeviceType to have a larger u_height, first validate that *all* instances of it have
+        # room to expand within their racks. This validation will impose a very high performance penalty when there are
+        # many instances to check, but increasing the u_height of a DeviceType should be a very rare occurrence.
+        if self.pk is not None and self.u_height > self._original_u_height:
+            for d in Device.objects.filter(device_type=self, position__isnull=False):
+                face_required = None if self.is_full_depth else d.face
+                u_available = d.rack.get_available_units(u_height=self.u_height, rack_face=face_required,
+                                                         exclude=[d.pk])
+                if d.position not in u_available:
+                    raise ValidationError("Device {} in rack {} does not have sufficient space to accommodate a height "
+                                          "of {}U".format(d, d.rack, self.u_height))
+
+        if not self.is_console_server and self.cs_port_templates.count():
+            raise ValidationError("Must delete all console server port templates associated with this device before "
+                                  "declassifying it as a console server.")
+
+        if not self.is_pdu and self.power_outlet_templates.count():
+            raise ValidationError("Must delete all power outlet templates associated with this device before "
+                                  "declassifying it as a PDU.")
+
+        if not self.is_network_device and self.interface_templates.filter(mgmt_only=False).count():
+            raise ValidationError("Must delete all non-management-only interface templates associated with this device "
+                                  "before declassifying it as a network device.")
+
+        if self.subdevice_role != SUBDEVICE_ROLE_PARENT and self.device_bay_templates.count():
+            raise ValidationError("Must delete all device bay templates associated with this device before "
+                                  "declassifying it as a parent device.")
+
+        if self.u_height and self.subdevice_role == SUBDEVICE_ROLE_CHILD:
+            raise ValidationError("Child device types must be 0U.")
+
+    @property
+    def is_parent_device(self):
+        return bool(self.subdevice_role)
+
+    @property
+    def is_child_device(self):
+        return bool(self.subdevice_role is False)
 
 
 class ConsolePortTemplate(models.Model):
@@ -468,10 +700,25 @@ class InterfaceTemplate(models.Model):
     """
     device_type = models.ForeignKey('DeviceType', related_name='interface_templates', on_delete=models.CASCADE)
     name = models.CharField(max_length=30)
-    form_factor = models.PositiveSmallIntegerField(choices=IFACE_FF_CHOICES, default=IFACE_FF_SFP_PLUS)
+    form_factor = models.PositiveSmallIntegerField(choices=IFACE_FF_CHOICES, default=IFACE_FF_10GE_SFP_PLUS)
     mgmt_only = models.BooleanField(default=False, verbose_name='Management only')
 
     objects = InterfaceTemplateManager()
+
+    class Meta:
+        ordering = ['device_type', 'name']
+        unique_together = ['device_type', 'name']
+
+    def __unicode__(self):
+        return self.name
+
+
+class DeviceBayTemplate(models.Model):
+    """
+    A template for a DeviceBay to be created for a new parent Device.
+    """
+    device_type = models.ForeignKey('DeviceType', related_name='device_bay_templates', on_delete=models.CASCADE)
+    name = models.CharField(max_length=30)
 
     class Meta:
         ordering = ['device_type', 'name']
@@ -492,7 +739,7 @@ class DeviceRole(models.Model):
     """
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(unique=True)
-    color = models.CharField(max_length=30, choices=DEVICE_ROLE_COLOR_CHOICES)
+    color = models.CharField(max_length=30, choices=ROLE_COLOR_CHOICES)
 
     class Meta:
         ordering = ['name']
@@ -524,7 +771,13 @@ class Platform(models.Model):
         return "{}?platform={}".format(reverse('dcim:device_list'), self.slug)
 
 
-class Device(CreatedUpdatedModel):
+class DeviceManager(NaturalOrderByManager):
+
+    def get_queryset(self):
+        return self.natural_order_by('name')
+
+
+class Device(CreatedUpdatedModel, CustomFieldModel):
     """
     A Device represents a piece of physical hardware mounted within a Rack. Each Device is assigned a DeviceType,
     DeviceRole, and (optionally) a Platform. Device names are not required, however if one is set it must be unique.
@@ -538,18 +791,26 @@ class Device(CreatedUpdatedModel):
     """
     device_type = models.ForeignKey('DeviceType', related_name='instances', on_delete=models.PROTECT)
     device_role = models.ForeignKey('DeviceRole', related_name='devices', on_delete=models.PROTECT)
+    tenant = models.ForeignKey(Tenant, blank=True, null=True, related_name='devices', on_delete=models.PROTECT)
     platform = models.ForeignKey('Platform', related_name='devices', blank=True, null=True, on_delete=models.SET_NULL)
     name = NullableCharField(max_length=50, blank=True, null=True, unique=True)
     serial = models.CharField(max_length=50, blank=True, verbose_name='Serial number')
+    asset_tag = NullableCharField(max_length=50, blank=True, null=True, unique=True, verbose_name='Asset tag',
+                                  help_text='A unique tag used to identify this device')
     rack = models.ForeignKey('Rack', related_name='devices', on_delete=models.PROTECT)
     position = models.PositiveSmallIntegerField(blank=True, null=True, validators=[MinValueValidator(1)],
                                                 verbose_name='Position (U)',
                                                 help_text='Number of the lowest U position occupied by the device')
     face = models.PositiveSmallIntegerField(blank=True, null=True, choices=RACK_FACE_CHOICES, verbose_name='Rack face')
     status = models.BooleanField(choices=STATUS_CHOICES, default=STATUS_ACTIVE, verbose_name='Status')
-    primary_ip = models.OneToOneField('ipam.IPAddress', related_name='primary_for', on_delete=models.SET_NULL,
-                                      blank=True, null=True, verbose_name='Primary IP')
+    primary_ip4 = models.OneToOneField('ipam.IPAddress', related_name='primary_ip4_for', on_delete=models.SET_NULL,
+                                       blank=True, null=True, verbose_name='Primary IPv4')
+    primary_ip6 = models.OneToOneField('ipam.IPAddress', related_name='primary_ip6_for', on_delete=models.SET_NULL,
+                                       blank=True, null=True, verbose_name='Primary IPv6')
     comments = models.TextField(blank=True)
+    custom_field_values = GenericRelation(CustomFieldValue, content_type_field='obj_type', object_id_field='obj_id')
+
+    objects = DeviceManager()
 
     class Meta:
         ordering = ['name']
@@ -563,15 +824,20 @@ class Device(CreatedUpdatedModel):
 
     def clean(self):
 
+        # Validate device type assignment
+        if not hasattr(self, 'device_type'):
+            raise ValidationError("Must specify device type.")
+
+        # Child devices cannot be assigned to a rack face/unit
+        if self.device_type.is_child_device and (self.face is not None or self.position):
+            raise ValidationError("Child device types cannot be assigned a rack face or position.")
+
         # Validate position/face combination
         if self.position and self.face is None:
             raise ValidationError("Must specify rack face with rack position.")
 
         # Validate rack space
-        try:
-            rack_face = self.face if not self.device_type.is_full_depth else None
-        except DeviceType.DoesNotExist:
-            raise ValidationError("Must specify device type.")
+        rack_face = self.face if not self.device_type.is_full_depth else None
         exclude_list = [self.pk] if self.pk else []
         try:
             available_units = self.rack.get_available_units(u_height=self.device_type.u_height, rack_face=rack_face,
@@ -610,15 +876,24 @@ class Device(CreatedUpdatedModel):
                 [Interface(device=self, name=template.name, form_factor=template.form_factor,
                            mgmt_only=template.mgmt_only) for template in self.device_type.interface_templates.all()]
             )
+            DeviceBay.objects.bulk_create(
+                [DeviceBay(device=self, name=template.name) for template in
+                 self.device_type.device_bay_templates.all()]
+            )
+
+        # Update Rack assignment for any child Devices
+        Device.objects.filter(parent_bay__device=self).update(rack=self.rack)
 
     def to_csv(self):
         return ','.join([
             self.name or '',
             self.device_role.name,
+            self.tenant.name if self.tenant else '',
             self.device_type.manufacturer.name,
             self.device_type.model,
             self.platform.name if self.platform else '',
             self.serial,
+            self.asset_tag if self.asset_tag else '',
             self.rack.site.name,
             self.rack.name,
             str(self.position) if self.position else '',
@@ -630,9 +905,9 @@ class Device(CreatedUpdatedModel):
         if self.name:
             return self.name
         elif self.position:
-            return "{} ({} U{})".format(self.device_type, self.rack.name, self.position)
+            return u"{} ({} U{})".format(self.device_type, self.rack.name, self.position)
         else:
-            return "{} ({})".format(self.device_type, self.rack.name)
+            return u"{} ({})".format(self.device_type, self.rack.name)
 
     @property
     def identifier(self):
@@ -642,6 +917,23 @@ class Device(CreatedUpdatedModel):
         if self.name is not None:
             return self.name
         return '{{{}}}'.format(self.pk)
+
+    @property
+    def primary_ip(self):
+        if settings.PREFER_IPV4 and self.primary_ip4:
+            return self.primary_ip4
+        elif self.primary_ip6:
+            return self.primary_ip6
+        elif self.primary_ip4:
+            return self.primary_ip4
+        else:
+            return None
+
+    def get_children(self):
+        """
+        Return the set of child Devices installed in DeviceBays within this Device.
+        """
+        return Device.objects.filter(parent_bay__device=self.pk)
 
     def get_rpc_client(self):
         """
@@ -784,7 +1076,8 @@ class Interface(models.Model):
     """
     device = models.ForeignKey('Device', related_name='interfaces', on_delete=models.CASCADE)
     name = models.CharField(max_length=30)
-    form_factor = models.PositiveSmallIntegerField(choices=IFACE_FF_CHOICES, default=IFACE_FF_SFP_PLUS)
+    form_factor = models.PositiveSmallIntegerField(choices=IFACE_FF_CHOICES, default=IFACE_FF_10GE_SFP_PLUS)
+    mac_address = MACAddressField(null=True, blank=True, verbose_name='MAC Address')
     mgmt_only = models.BooleanField(default=False, verbose_name='OOB Management',
                                     help_text="This interface is used only for out-of-band management")
     description = models.CharField(max_length=100, blank=True)
@@ -797,6 +1090,13 @@ class Interface(models.Model):
 
     def __unicode__(self):
         return self.name
+
+    def clean(self):
+
+        if self.form_factor == IFACE_FF_VIRTUAL and self.is_connected:
+            raise ValidationError({'form_factor': "Virtual interfaces cannot be connected to another interface or "
+                                                  "circuit. Disconnect the interface or choose a physical form "
+                                                  "factor."})
 
     @property
     def is_physical(self):
@@ -831,8 +1131,8 @@ class Interface(models.Model):
                 return connection.interface_a
         except InterfaceConnection.DoesNotExist:
             return None
-        except InterfaceConnection.MultipleObjectsReturned as e:
-            raise e("Multiple connections found for {0} interface {1}!".format(self.device, self))
+        except InterfaceConnection.MultipleObjectsReturned:
+            raise MultipleObjectsReturned("Multiple connections found for {} interface {}!".format(self.device, self))
 
 
 class InterfaceConnection(models.Model):
@@ -860,6 +1160,34 @@ class InterfaceConnection(models.Model):
         ])
 
 
+class DeviceBay(models.Model):
+    """
+    An empty space within a Device which can house a child device
+    """
+    device = models.ForeignKey('Device', related_name='device_bays', on_delete=models.CASCADE)
+    name = models.CharField(max_length=50, verbose_name='Name')
+    installed_device = models.OneToOneField('Device', related_name='parent_bay', on_delete=models.SET_NULL, blank=True,
+                                            null=True)
+
+    class Meta:
+        ordering = ['device', 'name']
+        unique_together = ['device', 'name']
+
+    def __unicode__(self):
+        return u'{} - {}'.format(self.device.name, self.name)
+
+    def clean(self):
+
+        # Validate that the parent Device can have DeviceBays
+        if not self.device.device_type.is_parent_device:
+            raise ValidationError("This type of device ({}) does not support device bays."
+                                  .format(self.device.device_type))
+
+        # Cannot install a device into itself, obviously
+        if self.device == self.installed_device:
+            raise ValidationError("Cannot install a device into itself.")
+
+
 class Module(models.Model):
     """
     A Module represents a piece of hardware within a Device, such as a line card or power supply. Modules are used only
@@ -868,6 +1196,8 @@ class Module(models.Model):
     device = models.ForeignKey('Device', related_name='modules', on_delete=models.CASCADE)
     parent = models.ForeignKey('self', related_name='submodules', blank=True, null=True, on_delete=models.CASCADE)
     name = models.CharField(max_length=50, verbose_name='Name')
+    manufacturer = models.ForeignKey('Manufacturer', related_name='modules', blank=True, null=True,
+                                     on_delete=models.PROTECT)
     part_id = models.CharField(max_length=50, verbose_name='Part ID', blank=True)
     serial = models.CharField(max_length=50, verbose_name='Serial number', blank=True)
     discovered = models.BooleanField(default=False, verbose_name='Discovered')

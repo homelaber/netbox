@@ -1,23 +1,28 @@
+from django.contrib.contenttypes.fields import GenericRelation
 from django.core.urlresolvers import reverse
 from django.db import models
 
+from dcim.fields import ASNField
 from dcim.models import Site, Interface
+from extras.models import CustomFieldModel, CustomFieldValue
+from tenancy.models import Tenant
 from utilities.models import CreatedUpdatedModel
 
 
-class Provider(CreatedUpdatedModel):
+class Provider(CreatedUpdatedModel, CustomFieldModel):
     """
     Each Circuit belongs to a Provider. This is usually a telecommunications company or similar organization. This model
     stores information pertinent to the user's relationship with the Provider.
     """
     name = models.CharField(max_length=50, unique=True)
     slug = models.SlugField(unique=True)
-    asn = models.PositiveIntegerField(blank=True, null=True, verbose_name='ASN')
+    asn = ASNField(blank=True, null=True, verbose_name='ASN')
     account = models.CharField(max_length=30, blank=True, verbose_name='Account number')
     portal_url = models.URLField(blank=True, verbose_name='Portal')
     noc_contact = models.TextField(blank=True, verbose_name='NOC contact')
     admin_contact = models.TextField(blank=True, verbose_name='Admin contact')
     comments = models.TextField(blank=True)
+    custom_field_values = GenericRelation(CustomFieldValue, content_type_field='obj_type', object_id_field='obj_id')
 
     class Meta:
         ordering = ['name']
@@ -56,7 +61,7 @@ class CircuitType(models.Model):
         return "{}?type={}".format(reverse('circuits:circuit_list'), self.slug)
 
 
-class Circuit(CreatedUpdatedModel):
+class Circuit(CreatedUpdatedModel, CustomFieldModel):
     """
     A communications circuit connects two points. Each Circuit belongs to a Provider; Providers may have multiple
     circuits. Each circuit is also assigned a CircuitType and a Site. A Circuit may be terminated to a specific device
@@ -65,21 +70,25 @@ class Circuit(CreatedUpdatedModel):
     cid = models.CharField(max_length=50, verbose_name='Circuit ID')
     provider = models.ForeignKey('Provider', related_name='circuits', on_delete=models.PROTECT)
     type = models.ForeignKey('CircuitType', related_name='circuits', on_delete=models.PROTECT)
+    tenant = models.ForeignKey(Tenant, related_name='circuits', blank=True, null=True, on_delete=models.PROTECT)
     site = models.ForeignKey(Site, related_name='circuits', on_delete=models.PROTECT)
     interface = models.OneToOneField(Interface, related_name='circuit', blank=True, null=True)
     install_date = models.DateField(blank=True, null=True, verbose_name='Date installed')
     port_speed = models.PositiveIntegerField(verbose_name='Port speed (Kbps)')
+    upstream_speed = models.PositiveIntegerField(blank=True, null=True, verbose_name='Upstream speed (Kbps)',
+                                                 help_text='Upstream speed, if different from port speed')
     commit_rate = models.PositiveIntegerField(blank=True, null=True, verbose_name='Commit rate (Kbps)')
     xconnect_id = models.CharField(max_length=50, blank=True, verbose_name='Cross-connect ID')
     pp_info = models.CharField(max_length=100, blank=True, verbose_name='Patch panel/port(s)')
     comments = models.TextField(blank=True)
+    custom_field_values = GenericRelation(CustomFieldValue, content_type_field='obj_type', object_id_field='obj_id')
 
     class Meta:
         ordering = ['provider', 'cid']
         unique_together = ['provider', 'cid']
 
     def __unicode__(self):
-        return "{0} {1}".format(self.provider, self.cid)
+        return u'{} {}'.format(self.provider, self.cid)
 
     def get_absolute_url(self):
         return reverse('circuits:circuit', args=[self.pk])
@@ -89,9 +98,11 @@ class Circuit(CreatedUpdatedModel):
             self.cid,
             self.provider.name,
             self.type.name,
+            self.tenant.name if self.tenant else '',
             self.site.name,
             self.install_date.isoformat() if self.install_date else '',
             str(self.port_speed),
+            str(self.upstream_speed),
             str(self.commit_rate) if self.commit_rate else '',
             self.xconnect_id,
             self.pp_info,
@@ -112,12 +123,18 @@ class Circuit(CreatedUpdatedModel):
         else:
             return '{} Kbps'.format(speed)
 
-    @property
     def port_speed_human(self):
         return self._humanize_speed(self.port_speed)
+    port_speed_human.admin_order_field = 'port_speed'
 
-    @property
+    def upstream_speed_human(self):
+        if not self.upstream_speed:
+            return ''
+        return self._humanize_speed(self.upstream_speed)
+    upstream_speed_human.admin_order_field = 'upstream_speed'
+
     def commit_rate_human(self):
         if not self.commit_rate:
             return ''
         return self._humanize_speed(self.commit_rate)
+    commit_rate_human.admin_order_field = 'commit_rate'

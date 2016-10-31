@@ -18,6 +18,10 @@ urlpatterns = [
     url(r'^rack-groups/$', RackGroupListView.as_view(), name='rackgroup_list'),
     url(r'^rack-groups/(?P<pk>\d+)/$', RackGroupDetailView.as_view(), name='rackgroup_detail'),
 
+    # Rack roles
+    url(r'^rack-roles/$', RackRoleListView.as_view(), name='rackrole_list'),
+    url(r'^rack-roles/(?P<pk>\d+)/$', RackRoleDetailView.as_view(), name='rackrole_detail'),
+
     # Racks
     url(r'^racks/$', RackListView.as_view(), name='rack_list'),
     url(r'^racks/(?P<pk>\d+)/$', RackDetailView.as_view(), name='rack_detail'),
@@ -49,6 +53,8 @@ urlpatterns = [
     url(r'^devices/(?P<pk>\d+)/power-ports/$', PowerPortListView.as_view(), name='device_powerports'),
     url(r'^devices/(?P<pk>\d+)/power-outlets/$', PowerOutletListView.as_view(), name='device_poweroutlets'),
     url(r'^devices/(?P<pk>\d+)/interfaces/$', InterfaceListView.as_view(), name='device_interfaces'),
+    url(r'^devices/(?P<pk>\d+)/device-bays/$', DeviceBayListView.as_view(), name='device_devicebays'),
+    url(r'^devices/(?P<pk>\d+)/modules/$', ModuleListView.as_view(), name='device_modules'),
 
     # Console ports
     url(r'^console-ports/(?P<pk>\d+)/$', ConsolePortView.as_view(), name='consoleport'),
@@ -60,7 +66,8 @@ urlpatterns = [
     url(r'^interfaces/(?P<pk>\d+)/$', InterfaceDetailView.as_view(), name='interface_detail'),
     url(r'^interfaces/(?P<pk>\d+)/graphs/$', GraphListView.as_view(), {'type': GRAPH_TYPE_INTERFACE},
         name='interface_graphs'),
-    url(r'^interface-connections/(?P<pk>\d+)/$', InterfaceConnectionView.as_view(), name='interfaceconnection'),
+    url(r'^interface-connections/$', InterfaceConnectionListView.as_view(), name='interfaceconnection_list'),
+    url(r'^interface-connections/(?P<pk>\d+)/$', InterfaceConnectionView.as_view(), name='interfaceconnection_detail'),
 
     # Miscellaneous
     url(r'^related-connections/$', RelatedConnectionsView.as_view(), name='related_connections'),

@@ -1,7 +1,11 @@
+import csv
+import itertools
 import re
 
 from django import forms
+from django.conf import settings
 from django.core.urlresolvers import reverse_lazy
+from django.core.validators import URLValidator
 from django.utils.encoding import force_text
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
@@ -24,6 +28,13 @@ def expand_pattern(string):
                 yield "{}{}{}".format(lead, i, string)
         else:
             yield "{}{}{}".format(lead, i, remnant)
+
+
+def add_blank_choice(choices):
+    """
+    Add a blank choice to the beginning of a choices list.
+    """
+    return ((None, '---------'),) + tuple(choices)
 
 
 #
@@ -60,7 +71,7 @@ class SelectWithDisabled(forms.Select):
             option_label = option_label['label']
         disabled_html = ' disabled="disabled"' if option_disabled else ''
 
-        return format_html('<option value="{}"{}{}>{}</option>',
+        return format_html(u'<option value="{}"{}{}>{}</option>',
                            option_value,
                            selected_html,
                            disabled_html,
@@ -81,7 +92,7 @@ class APISelect(SelectWithDisabled):
         super(APISelect, self).__init__(*args, **kwargs)
 
         self.attrs['class'] = 'api-select'
-        self.attrs['api-url'] = api_url
+        self.attrs['api-url'] = '/{}{}'.format(settings.BASE_PATH, api_url.lstrip('/'))  # Inject BASE_PATH
         if display_field:
             self.attrs['display-field'] = display_field
         if disabled_indicator:
@@ -118,14 +129,15 @@ class Livesearch(forms.TextInput):
 
 class CSVDataField(forms.CharField):
     """
-    A field for comma-separated values (CSV)
+    A field for comma-separated values (CSV). Values containing commas should be encased within double quotes. Example:
+        '"New York, NY",new-york-ny,Other stuff' => ['New York, NY', 'new-york-ny', 'Other stuff']
     """
     csv_form = None
+    widget = forms.Textarea
 
     def __init__(self, csv_form, *args, **kwargs):
         self.csv_form = csv_form
         self.columns = self.csv_form().fields.keys()
-        self.widget = forms.Textarea
         super(CSVDataField, self).__init__(*args, **kwargs)
         self.strip = False
         if not self.label:
@@ -133,19 +145,23 @@ class CSVDataField(forms.CharField):
         if not self.help_text:
             self.help_text = 'Enter one line per record in CSV format.'
 
+    def utf_8_encoder(self, unicode_csv_data):
+        for line in unicode_csv_data:
+            yield line.encode('utf-8')
+
     def to_python(self, value):
         # Return a list of dictionaries, each representing an individual record
         records = []
-        for i, row in enumerate(value.split('\n'), start=1):
-            if row.strip():
-                values = row.strip().split(',')
-                if len(values) < len(self.columns):
+        reader = csv.reader(self.utf_8_encoder(value.splitlines()))
+        for i, row in enumerate(reader, start=1):
+            if row:
+                if len(row) < len(self.columns):
                     raise forms.ValidationError("Line {}: Field(s) missing (found {}; expected {})"
-                                                .format(i, len(values), len(self.columns)))
-                elif len(values) > len(self.columns):
+                                                .format(i, len(row), len(self.columns)))
+                elif len(row) > len(self.columns):
                     raise forms.ValidationError("Line {}: Too many fields (found {}; expected {})"
-                                                .format(i, len(values), len(self.columns)))
-                record = dict(zip(self.columns, values))
+                                                .format(i, len(row), len(self.columns)))
+                record = dict(zip(self.columns, row))
                 records.append(record)
         return records
 
@@ -213,6 +229,47 @@ class SlugField(forms.SlugField):
         self.widget.attrs['slug-source'] = slug_source
 
 
+class FilterChoiceField(forms.ModelMultipleChoiceField):
+    iterator = forms.models.ModelChoiceIterator
+
+    def __init__(self, null_option=None, *args, **kwargs):
+        self.null_option = null_option
+        if 'required' not in kwargs:
+            kwargs['required'] = False
+        if 'widget' not in kwargs:
+            kwargs['widget'] = forms.SelectMultiple(attrs={'size': 6})
+        super(FilterChoiceField, self).__init__(*args, **kwargs)
+
+    def label_from_instance(self, obj):
+        if hasattr(obj, 'filter_count'):
+            return u'{} ({})'.format(obj, obj.filter_count)
+        return force_text(obj)
+
+    def _get_choices(self):
+        if hasattr(self, '_choices'):
+            return self._choices
+        if self.null_option is not None:
+            return itertools.chain([self.null_option], self.iterator(self))
+        return self.iterator(self)
+
+    choices = property(_get_choices, forms.ChoiceField._set_choices)
+
+
+class LaxURLField(forms.URLField):
+    """
+    Custom URLField which allows any valid URL scheme
+    """
+
+    class AnyURLScheme(object):
+        # A fake URL list which "contains" all scheme names abiding by the syntax defined in RFC 3986 section 3.1
+        def __contains__(self, item):
+            if not item or not re.match('^[a-z][0-9a-z+\-.]*$', item.lower()):
+                return False
+            return True
+
+    default_validators = [URLValidator(schemes=AnyURLScheme())]
+
+
 #
 # Forms
 #
@@ -229,11 +286,24 @@ class BootstrapMixin(forms.BaseForm):
                     field.widget.attrs['class'] = 'form-control'
             if field.required:
                 field.widget.attrs['required'] = 'required'
-            field.widget.attrs['placeholder'] = field.label
+            if 'placeholder' not in field.widget.attrs:
+                field.widget.attrs['placeholder'] = field.label
 
 
 class ConfirmationForm(forms.Form, BootstrapMixin):
     confirm = forms.BooleanField(required=True)
+
+
+class BulkEditForm(forms.Form):
+
+    def __init__(self, model, *args, **kwargs):
+        super(BulkEditForm, self).__init__(*args, **kwargs)
+        self.model = model
+        # Copy any nullable fields defined in Meta
+        if hasattr(self.Meta, 'nullable_fields'):
+            self.nullable_fields = [field for field in self.Meta.nullable_fields]
+        else:
+            self.nullable_fields = []
 
 
 class BulkImportForm(forms.Form):

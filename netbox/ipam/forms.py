@@ -1,31 +1,36 @@
-from netaddr import IPNetwork
-
 from django import forms
 from django.db.models import Count
 
 from dcim.models import Site, Device, Interface
+from extras.forms import CustomFieldForm, CustomFieldBulkEditForm, CustomFieldFilterForm
+from tenancy.models import Tenant
 from utilities.forms import (
-    BootstrapMixin, ConfirmationForm, APISelect, Livesearch, CSVDataField, BulkImportForm, SlugField,
+    APISelect, BootstrapMixin, CSVDataField, BulkImportForm, FilterChoiceField, Livesearch, SlugField,
 )
 
 from .models import (
-    Aggregate, IPAddress, Prefix, PREFIX_STATUS_CHOICES, RIR, Role, VLAN, VLAN_STATUS_CHOICES, VRF,
+    Aggregate, IPAddress, Prefix, PREFIX_STATUS_CHOICES, RIR, Role, VLAN, VLANGroup, VLAN_STATUS_CHOICES, VRF,
 )
 
 
 FORM_PREFIX_STATUS_CHOICES = (('', '---------'),) + PREFIX_STATUS_CHOICES
 FORM_VLAN_STATUS_CHOICES = (('', '---------'),) + VLAN_STATUS_CHOICES
+IP_FAMILY_CHOICES = [
+    ('', 'All'),
+    (4, 'IPv4'),
+    (6, 'IPv6'),
+]
 
 
 #
 # VRFs
 #
 
-class VRFForm(forms.ModelForm, BootstrapMixin):
+class VRFForm(BootstrapMixin, CustomFieldForm):
 
     class Meta:
         model = VRF
-        fields = ['name', 'rd', 'description']
+        fields = ['name', 'rd', 'tenant', 'enforce_unique', 'description']
         labels = {
             'rd': "RD",
         }
@@ -35,23 +40,31 @@ class VRFForm(forms.ModelForm, BootstrapMixin):
 
 
 class VRFFromCSVForm(forms.ModelForm):
+    tenant = forms.ModelChoiceField(Tenant.objects.all(), to_field_name='name', required=False,
+                                    error_messages={'invalid_choice': 'Tenant not found.'})
 
     class Meta:
         model = VRF
-        fields = ['name', 'rd', 'description']
+        fields = ['name', 'rd', 'tenant', 'enforce_unique', 'description']
 
 
 class VRFImportForm(BulkImportForm, BootstrapMixin):
     csv = CSVDataField(csv_form=VRFFromCSVForm)
 
 
-class VRFBulkEditForm(forms.Form, BootstrapMixin):
+class VRFBulkEditForm(BootstrapMixin, CustomFieldBulkEditForm):
     pk = forms.ModelMultipleChoiceField(queryset=VRF.objects.all(), widget=forms.MultipleHiddenInput)
+    tenant = forms.ModelChoiceField(queryset=Tenant.objects.all(), required=False)
     description = forms.CharField(max_length=100, required=False)
 
+    class Meta:
+        nullable_fields = ['tenant', 'description']
 
-class VRFBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=VRF.objects.all(), widget=forms.MultipleHiddenInput)
+
+class VRFFilterForm(BootstrapMixin, CustomFieldFilterForm):
+    model = VRF
+    tenant = FilterChoiceField(queryset=Tenant.objects.annotate(filter_count=Count('vrfs')), to_field_name='slug',
+                               null_option=(0, None))
 
 
 #
@@ -66,15 +79,11 @@ class RIRForm(forms.ModelForm, BootstrapMixin):
         fields = ['name', 'slug']
 
 
-class RIRBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=RIR.objects.all(), widget=forms.MultipleHiddenInput)
-
-
 #
 # Aggregates
 #
 
-class AggregateForm(forms.ModelForm, BootstrapMixin):
+class AggregateForm(BootstrapMixin, CustomFieldForm):
 
     class Meta:
         model = Aggregate
@@ -99,25 +108,21 @@ class AggregateImportForm(BulkImportForm, BootstrapMixin):
     csv = CSVDataField(csv_form=AggregateFromCSVForm)
 
 
-class AggregateBulkEditForm(forms.Form, BootstrapMixin):
+class AggregateBulkEditForm(BootstrapMixin, CustomFieldBulkEditForm):
     pk = forms.ModelMultipleChoiceField(queryset=Aggregate.objects.all(), widget=forms.MultipleHiddenInput)
     rir = forms.ModelChoiceField(queryset=RIR.objects.all(), required=False, label='RIR')
     date_added = forms.DateField(required=False)
-    description = forms.CharField(max_length=50, required=False)
+    description = forms.CharField(max_length=100, required=False)
+
+    class Meta:
+        nullable_fields = ['date_added', 'description']
 
 
-class AggregateBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=Aggregate.objects.all(), widget=forms.MultipleHiddenInput)
-
-
-def aggregate_rir_choices():
-    rir_choices = RIR.objects.annotate(aggregate_count=Count('aggregates'))
-    return [(r.slug, '{} ({})'.format(r.name, r.aggregate_count)) for r in rir_choices]
-
-
-class AggregateFilterForm(forms.Form, BootstrapMixin):
-    rir = forms.MultipleChoiceField(required=False, choices=aggregate_rir_choices, label='RIR',
-                                    widget=forms.SelectMultiple(attrs={'size': 8}))
+class AggregateFilterForm(BootstrapMixin, CustomFieldFilterForm):
+    model = Aggregate
+    family = forms.ChoiceField(required=False, choices=IP_FAMILY_CHOICES, label='Address Family')
+    rir = FilterChoiceField(queryset=RIR.objects.annotate(filter_count=Count('aggregates')), to_field_name='slug',
+                            label='RIR')
 
 
 #
@@ -132,15 +137,11 @@ class RoleForm(forms.ModelForm, BootstrapMixin):
         fields = ['name', 'slug']
 
 
-class RoleBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=Role.objects.all(), widget=forms.MultipleHiddenInput)
-
-
 #
 # Prefixes
 #
 
-class PrefixForm(forms.ModelForm, BootstrapMixin):
+class PrefixForm(BootstrapMixin, CustomFieldForm):
     site = forms.ModelChoiceField(queryset=Site.objects.all(), required=False, label='Site',
                                   widget=forms.Select(attrs={'filter-for': 'vlan'}))
     vlan = forms.ModelChoiceField(queryset=VLAN.objects.all(), required=False, label='VLAN',
@@ -149,7 +150,7 @@ class PrefixForm(forms.ModelForm, BootstrapMixin):
 
     class Meta:
         model = Prefix
-        fields = ['prefix', 'vrf', 'site', 'vlan', 'status', 'role', 'description']
+        fields = ['prefix', 'vrf', 'tenant', 'site', 'vlan', 'status', 'role', 'description']
         help_texts = {
             'prefix': "IPv4 or IPv6 network",
             'vrf': "VRF (if applicable)",
@@ -173,32 +174,61 @@ class PrefixForm(forms.ModelForm, BootstrapMixin):
             self.fields['vlan'].choices = []
 
     def clean_prefix(self):
-        data = self.cleaned_data['prefix']
-        try:
-            prefix = IPNetwork(data)
-        except:
-            raise
+        prefix = self.cleaned_data['prefix']
         if prefix.version == 4 and prefix.prefixlen == 32:
             raise forms.ValidationError("Cannot create host addresses (/32) as prefixes. These should be IPv4 "
                                         "addresses instead.")
         elif prefix.version == 6 and prefix.prefixlen == 128:
             raise forms.ValidationError("Cannot create host addresses (/128) as prefixes. These should be IPv6 "
                                         "addresses instead.")
-        return data
+        return prefix
 
 
 class PrefixFromCSVForm(forms.ModelForm):
     vrf = forms.ModelChoiceField(queryset=VRF.objects.all(), required=False, to_field_name='rd',
                                  error_messages={'invalid_choice': 'VRF not found.'})
+    tenant = forms.ModelChoiceField(Tenant.objects.all(), to_field_name='name', required=False,
+                                    error_messages={'invalid_choice': 'Tenant not found.'})
     site = forms.ModelChoiceField(queryset=Site.objects.all(), required=False, to_field_name='name',
                                   error_messages={'invalid_choice': 'Site not found.'})
+    vlan_group_name = forms.CharField(required=False)
+    vlan_vid = forms.IntegerField(required=False)
     status_name = forms.ChoiceField(choices=[(s[1], s[0]) for s in PREFIX_STATUS_CHOICES])
     role = forms.ModelChoiceField(queryset=Role.objects.all(), required=False, to_field_name='name',
                                   error_messages={'invalid_choice': 'Invalid role.'})
 
     class Meta:
         model = Prefix
-        fields = ['prefix', 'vrf', 'site', 'status_name', 'role', 'description']
+        fields = ['prefix', 'vrf', 'tenant', 'site', 'vlan_group_name', 'vlan_vid', 'status_name', 'role',
+                  'description']
+
+    def clean(self):
+
+        super(PrefixFromCSVForm, self).clean()
+
+        site = self.cleaned_data.get('site')
+        vlan_group_name = self.cleaned_data.get('vlan_group_name')
+        vlan_vid = self.cleaned_data.get('vlan_vid')
+
+        # Validate VLAN
+        vlan_group = None
+        if vlan_group_name:
+            try:
+                vlan_group = VLANGroup.objects.get(site=site, name=vlan_group_name)
+            except VLANGroup.DoesNotExist:
+                self.add_error('vlan_group_name', "Invalid VLAN group ({} - {}).".format(site, vlan_group_name))
+        if vlan_vid and vlan_group:
+            try:
+                self.instance.vlan = VLAN.objects.get(group=vlan_group, vid=vlan_vid)
+            except VLAN.DoesNotExist:
+                self.add_error('vlan_vid', "Invalid VLAN ID ({} - {}).".format(vlan_group, vlan_vid))
+        elif vlan_vid and site:
+            try:
+                self.instance.vlan = VLAN.objects.get(site=site, vid=vlan_vid)
+            except VLAN.MultipleObjectsReturned:
+                self.add_error('vlan_vid', "Multiple VLANs found ({} - VID {})".format(site, vlan_vid))
+        elif vlan_vid:
+            self.add_error('vlan_vid', "Must specify site and/or VLAN group when assigning a VLAN.")
 
     def save(self, *args, **kwargs):
         m = super(PrefixFromCSVForm, self).save(commit=False)
@@ -213,52 +243,41 @@ class PrefixImportForm(BulkImportForm, BootstrapMixin):
     csv = CSVDataField(csv_form=PrefixFromCSVForm)
 
 
-class PrefixBulkEditForm(forms.Form, BootstrapMixin):
+class PrefixBulkEditForm(BootstrapMixin, CustomFieldBulkEditForm):
     pk = forms.ModelMultipleChoiceField(queryset=Prefix.objects.all(), widget=forms.MultipleHiddenInput)
     site = forms.ModelChoiceField(queryset=Site.objects.all(), required=False)
-    vrf = forms.ModelChoiceField(queryset=VRF.objects.all(), required=False, label='VRF',
-                                 help_text="Select the VRF to assign, or check below to remove VRF assignment")
-    vrf_global = forms.BooleanField(required=False, label='Set VRF to global')
+    vrf = forms.ModelChoiceField(queryset=VRF.objects.all(), required=False, label='VRF')
+    tenant = forms.ModelChoiceField(queryset=Tenant.objects.all(), required=False)
     status = forms.ChoiceField(choices=FORM_PREFIX_STATUS_CHOICES, required=False)
     role = forms.ModelChoiceField(queryset=Role.objects.all(), required=False)
-    description = forms.CharField(max_length=50, required=False)
+    description = forms.CharField(max_length=100, required=False)
 
-
-class PrefixBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=Prefix.objects.all(), widget=forms.MultipleHiddenInput)
-
-
-def prefix_vrf_choices():
-    vrf_choices = [('', 'All'), (0, 'Global')]
-    vrf_choices += [(v.pk, v.name) for v in VRF.objects.all()]
-    return vrf_choices
-
-
-def prefix_site_choices():
-    site_choices = Site.objects.annotate(prefix_count=Count('prefixes'))
-    return [(s.slug, '{} ({})'.format(s.name, s.prefix_count)) for s in site_choices]
+    class Meta:
+        nullable_fields = ['site', 'vrf', 'tenant', 'role', 'description']
 
 
 def prefix_status_choices():
     status_counts = {}
     for status in Prefix.objects.values('status').annotate(count=Count('status')).order_by('status'):
         status_counts[status['status']] = status['count']
-    return [(s[0], '{} ({})'.format(s[1], status_counts.get(s[0], 0))) for s in PREFIX_STATUS_CHOICES]
+    return [(s[0], u'{} ({})'.format(s[1], status_counts.get(s[0], 0))) for s in PREFIX_STATUS_CHOICES]
 
 
-def prefix_role_choices():
-    role_choices = Role.objects.annotate(prefix_count=Count('prefixes'))
-    return [(r.slug, '{} ({})'.format(r.name, r.prefix_count)) for r in role_choices]
-
-
-class PrefixFilterForm(forms.Form, BootstrapMixin):
-    parent = forms.CharField(required=False, label='Search Within')
-    vrf = forms.ChoiceField(required=False, choices=prefix_vrf_choices, label='VRF')
-    status = forms.MultipleChoiceField(required=False, choices=prefix_status_choices)
-    site = forms.MultipleChoiceField(required=False, choices=prefix_site_choices,
-                                     widget=forms.SelectMultiple(attrs={'size': 8}))
-    role = forms.MultipleChoiceField(required=False, choices=prefix_role_choices,
-                                     widget=forms.SelectMultiple(attrs={'size': 8}))
+class PrefixFilterForm(BootstrapMixin, CustomFieldFilterForm):
+    model = Prefix
+    parent = forms.CharField(required=False, label='Search Within', widget=forms.TextInput(attrs={
+        'placeholder': 'Network',
+    }))
+    family = forms.ChoiceField(required=False, choices=IP_FAMILY_CHOICES, label='Address Family')
+    vrf = FilterChoiceField(queryset=VRF.objects.annotate(filter_count=Count('prefixes')), to_field_name='rd',
+                            label='VRF', null_option=(0, 'Global'))
+    tenant = FilterChoiceField(queryset=Tenant.objects.annotate(filter_count=Count('prefixes')), to_field_name='slug',
+                               null_option=(0, 'None'))
+    status = forms.MultipleChoiceField(choices=prefix_status_choices, required=False)
+    site = FilterChoiceField(queryset=Site.objects.annotate(filter_count=Count('prefixes')), to_field_name='slug',
+                             null_option=(0, 'None'))
+    role = FilterChoiceField(queryset=Role.objects.annotate(filter_count=Count('prefixes')), to_field_name='slug',
+                             null_option=(0, 'None'))
     expand = forms.BooleanField(required=False, label='Expand prefix hierarchy')
 
 
@@ -266,11 +285,12 @@ class PrefixFilterForm(forms.Form, BootstrapMixin):
 # IP addresses
 #
 
-class IPAddressForm(forms.ModelForm, BootstrapMixin):
+class IPAddressForm(BootstrapMixin, CustomFieldForm):
     nat_site = forms.ModelChoiceField(queryset=Site.objects.all(), required=False, label='Site',
                                       widget=forms.Select(attrs={'filter-for': 'nat_device'}))
     nat_device = forms.ModelChoiceField(queryset=Device.objects.all(), required=False, label='Device',
                                         widget=APISelect(api_url='/api/dcim/devices/?site_id={{nat_site}}',
+                                                         display_field='display_name',
                                                          attrs={'filter-for': 'nat_inside'}))
     livesearch = forms.CharField(required=False, label='IP Address', widget=Livesearch(
         query_key='q', query_url='ipam-api:ipaddress_list', field_to_update='nat_inside', obj_label='address')
@@ -281,7 +301,7 @@ class IPAddressForm(forms.ModelForm, BootstrapMixin):
 
     class Meta:
         model = IPAddress
-        fields = ['address', 'vrf', 'nat_device', 'nat_inside', 'description']
+        fields = ['address', 'vrf', 'tenant', 'nat_device', 'nat_inside', 'description']
         help_texts = {
             'address': "IPv4 or IPv6 address and mask",
             'vrf': "VRF (if applicable)",
@@ -329,7 +349,9 @@ class IPAddressForm(forms.ModelForm, BootstrapMixin):
 
 class IPAddressFromCSVForm(forms.ModelForm):
     vrf = forms.ModelChoiceField(queryset=VRF.objects.all(), required=False, to_field_name='rd',
-                                 error_messages={'invalid_choice': 'Site not found.'})
+                                 error_messages={'invalid_choice': 'VRF not found.'})
+    tenant = forms.ModelChoiceField(Tenant.objects.all(), to_field_name='name', required=False,
+                                    error_messages={'invalid_choice': 'Tenant not found.'})
     device = forms.ModelChoiceField(queryset=Device.objects.all(), required=False, to_field_name='name',
                                     error_messages={'invalid_choice': 'Device not found.'})
     interface_name = forms.CharField(required=False)
@@ -337,7 +359,7 @@ class IPAddressFromCSVForm(forms.ModelForm):
 
     class Meta:
         model = IPAddress
-        fields = ['address', 'vrf', 'device', 'interface_name', 'is_primary', 'description']
+        fields = ['address', 'vrf', 'tenant', 'device', 'interface_name', 'is_primary', 'description']
 
     def clean(self):
 
@@ -368,7 +390,10 @@ class IPAddressFromCSVForm(forms.ModelForm):
                                                             name=self.cleaned_data['interface_name'])
         # Set as primary for device
         if self.cleaned_data['is_primary']:
-            self.instance.primary_for = self.cleaned_data['device']
+            if self.instance.address.version == 4:
+                self.instance.primary_ip4_for = self.cleaned_data['device']
+            elif self.instance.address.version == 6:
+                self.instance.primary_ip6_for = self.cleaned_data['device']
 
         return super(IPAddressFromCSVForm, self).save(commit=commit)
 
@@ -377,61 +402,95 @@ class IPAddressImportForm(BulkImportForm, BootstrapMixin):
     csv = CSVDataField(csv_form=IPAddressFromCSVForm)
 
 
-class IPAddressBulkEditForm(forms.Form, BootstrapMixin):
+class IPAddressBulkEditForm(BootstrapMixin, CustomFieldBulkEditForm):
     pk = forms.ModelMultipleChoiceField(queryset=IPAddress.objects.all(), widget=forms.MultipleHiddenInput)
-    vrf = forms.ModelChoiceField(queryset=VRF.objects.all(), required=False, label='VRF',
-                                 help_text="Select the VRF to assign, or check below to remove VRF assignment")
-    vrf_global = forms.BooleanField(required=False, label='Set VRF to global')
-    description = forms.CharField(max_length=50, required=False)
+    vrf = forms.ModelChoiceField(queryset=VRF.objects.all(), required=False, label='VRF')
+    tenant = forms.ModelChoiceField(queryset=Tenant.objects.all(), required=False)
+    description = forms.CharField(max_length=100, required=False)
+
+    class Meta:
+        nullable_fields = ['vrf', 'tenant', 'description']
 
 
-class IPAddressBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=IPAddress.objects.all(), widget=forms.MultipleHiddenInput)
+class IPAddressFilterForm(BootstrapMixin, CustomFieldFilterForm):
+    model = IPAddress
+    parent = forms.CharField(required=False, label='Search Within', widget=forms.TextInput(attrs={
+        'placeholder': 'Prefix',
+    }))
+    family = forms.ChoiceField(required=False, choices=IP_FAMILY_CHOICES, label='Address Family')
+    vrf = FilterChoiceField(queryset=VRF.objects.annotate(filter_count=Count('ip_addresses')), to_field_name='rd',
+                            label='VRF', null_option=(0, 'Global'))
+    tenant = FilterChoiceField(queryset=Tenant.objects.annotate(filter_count=Count('ip_addresses')),
+                               to_field_name='slug', null_option=(0, 'None'))
 
 
-def ipaddress_family_choices():
-    return [('', 'All'), (4, 'IPv4'), (6, 'IPv6')]
+#
+# VLAN groups
+#
+
+class VLANGroupForm(forms.ModelForm, BootstrapMixin):
+    slug = SlugField()
+
+    class Meta:
+        model = VLANGroup
+        fields = ['site', 'name', 'slug']
 
 
-def ipaddress_vrf_choices():
-    vrf_choices = [('', 'All'), (0, 'Global')]
-    vrf_choices += [(v.pk, v.name) for v in VRF.objects.all()]
-    return vrf_choices
-
-
-class IPAddressFilterForm(forms.Form, BootstrapMixin):
-    family = forms.ChoiceField(required=False, choices=ipaddress_family_choices, label='Address Family')
-    vrf = forms.ChoiceField(required=False, choices=ipaddress_vrf_choices, label='VRF')
+class VLANGroupFilterForm(forms.Form, BootstrapMixin):
+    site = FilterChoiceField(queryset=Site.objects.annotate(filter_count=Count('vlan_groups')), to_field_name='slug')
 
 
 #
 # VLANs
 #
 
-class VLANForm(forms.ModelForm, BootstrapMixin):
+class VLANForm(BootstrapMixin, CustomFieldForm):
+    group = forms.ModelChoiceField(queryset=VLANGroup.objects.all(), required=False, label='Group', widget=APISelect(
+        api_url='/api/ipam/vlan-groups/?site_id={{site}}',
+    ))
 
     class Meta:
         model = VLAN
-        fields = ['site', 'vid', 'name', 'status', 'role']
+        fields = ['site', 'group', 'vid', 'name', 'tenant', 'status', 'role', 'description']
         help_texts = {
             'site': "The site at which this VLAN exists",
+            'group': "VLAN group (optional)",
             'vid': "Configured VLAN ID",
             'name': "Configured VLAN name",
             'status': "Operational status of this VLAN",
             'role': "The primary function of this VLAN",
         }
+        widgets = {
+            'site': forms.Select(attrs={'filter-for': 'group'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+
+        super(VLANForm, self).__init__(*args, **kwargs)
+
+        # Limit VLAN group choices
+        if self.is_bound and self.data.get('site'):
+            self.fields['group'].queryset = VLANGroup.objects.filter(site__pk=self.data['site'])
+        elif self.initial.get('site'):
+            self.fields['group'].queryset = VLANGroup.objects.filter(site=self.initial['site'])
+        else:
+            self.fields['group'].choices = []
 
 
 class VLANFromCSVForm(forms.ModelForm):
     site = forms.ModelChoiceField(queryset=Site.objects.all(), to_field_name='name',
                                   error_messages={'invalid_choice': 'Device not found.'})
+    group = forms.ModelChoiceField(queryset=VLANGroup.objects.all(), required=False, to_field_name='name',
+                                   error_messages={'invalid_choice': 'VLAN group not found.'})
+    tenant = forms.ModelChoiceField(Tenant.objects.all(), to_field_name='name', required=False,
+                                    error_messages={'invalid_choice': 'Tenant not found.'})
     status_name = forms.ChoiceField(choices=[(s[1], s[0]) for s in VLAN_STATUS_CHOICES])
     role = forms.ModelChoiceField(queryset=Role.objects.all(), required=False, to_field_name='name',
                                   error_messages={'invalid_choice': 'Invalid role.'})
 
     class Meta:
         model = VLAN
-        fields = ['site', 'vid', 'name', 'status_name', 'role']
+        fields = ['site', 'group', 'vid', 'name', 'tenant', 'status_name', 'role', 'description']
 
     def save(self, *args, **kwargs):
         m = super(VLANFromCSVForm, self).save(commit=False)
@@ -446,37 +505,33 @@ class VLANImportForm(BulkImportForm, BootstrapMixin):
     csv = CSVDataField(csv_form=VLANFromCSVForm)
 
 
-class VLANBulkEditForm(forms.Form, BootstrapMixin):
+class VLANBulkEditForm(BootstrapMixin, CustomFieldBulkEditForm):
     pk = forms.ModelMultipleChoiceField(queryset=VLAN.objects.all(), widget=forms.MultipleHiddenInput)
     site = forms.ModelChoiceField(queryset=Site.objects.all(), required=False)
+    group = forms.ModelChoiceField(queryset=VLANGroup.objects.all(), required=False)
+    tenant = forms.ModelChoiceField(queryset=Tenant.objects.all(), required=False)
     status = forms.ChoiceField(choices=FORM_VLAN_STATUS_CHOICES, required=False)
     role = forms.ModelChoiceField(queryset=Role.objects.all(), required=False)
+    description = forms.CharField(max_length=100, required=False)
 
-
-class VLANBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=VLAN.objects.all(), widget=forms.MultipleHiddenInput)
-
-
-def vlan_site_choices():
-    site_choices = Site.objects.annotate(vlan_count=Count('vlans'))
-    return [(s.slug, '{} ({})'.format(s.name, s.vlan_count)) for s in site_choices]
+    class Meta:
+        nullable_fields = ['group', 'tenant', 'role', 'description']
 
 
 def vlan_status_choices():
     status_counts = {}
     for status in VLAN.objects.values('status').annotate(count=Count('status')).order_by('status'):
         status_counts[status['status']] = status['count']
-    return [(s[0], '{} ({})'.format(s[1], status_counts.get(s[0], 0))) for s in VLAN_STATUS_CHOICES]
+    return [(s[0], u'{} ({})'.format(s[1], status_counts.get(s[0], 0))) for s in VLAN_STATUS_CHOICES]
 
 
-def vlan_role_choices():
-    role_choices = Role.objects.annotate(vlan_count=Count('vlans'))
-    return [(r.slug, '{} ({})'.format(r.name, r.vlan_count)) for r in role_choices]
-
-
-class VLANFilterForm(forms.Form, BootstrapMixin):
-    site = forms.MultipleChoiceField(required=False, choices=vlan_site_choices,
-                                     widget=forms.SelectMultiple(attrs={'size': 8}))
-    status = forms.MultipleChoiceField(required=False, choices=vlan_status_choices)
-    role = forms.MultipleChoiceField(required=False, choices=vlan_role_choices,
-                                     widget=forms.SelectMultiple(attrs={'size': 8}))
+class VLANFilterForm(BootstrapMixin, CustomFieldFilterForm):
+    model = VLAN
+    site = FilterChoiceField(queryset=Site.objects.annotate(filter_count=Count('vlans')), to_field_name='slug')
+    group_id = FilterChoiceField(queryset=VLANGroup.objects.annotate(filter_count=Count('vlans')), label='VLAN group',
+                                 null_option=(0, 'None'))
+    tenant = FilterChoiceField(queryset=Tenant.objects.annotate(filter_count=Count('vlans')), to_field_name='slug',
+                               null_option=(0, 'None'))
+    status = forms.MultipleChoiceField(choices=vlan_status_choices, required=False)
+    role = FilterChoiceField(queryset=Role.objects.annotate(filter_count=Count('vlans')), to_field_name='slug',
+                             null_option=(0, 'None'))

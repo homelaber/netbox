@@ -5,7 +5,7 @@ from django import forms
 from django.db.models import Count
 
 from dcim.models import Device
-from utilities.forms import BootstrapMixin, BulkImportForm, ConfirmationForm, CSVDataField, SlugField
+from utilities.forms import BootstrapMixin, BulkEditForm, BulkImportForm, CSVDataField, FilterChoiceField, SlugField
 
 from .models import Secret, SecretRole, UserKey
 
@@ -42,17 +42,14 @@ class SecretRoleForm(forms.ModelForm, BootstrapMixin):
         fields = ['name', 'slug']
 
 
-class SecretRoleBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=SecretRole.objects.all(), widget=forms.MultipleHiddenInput)
-
-
 #
 # Secrets
 #
 
 class SecretForm(forms.ModelForm, BootstrapMixin):
-    private_key = forms.CharField(widget=forms.HiddenInput())
-    plaintext = forms.CharField(max_length=65535, required=False, label='Plaintext')
+    private_key = forms.CharField(required=False, widget=forms.HiddenInput())
+    plaintext = forms.CharField(max_length=65535, required=False, label='Plaintext',
+                                widget=forms.TextInput(attrs={'class': 'requires-private-key'}))
     plaintext2 = forms.CharField(max_length=65535, required=False, label='Plaintext (verify)')
 
     class Meta:
@@ -60,7 +57,8 @@ class SecretForm(forms.ModelForm, BootstrapMixin):
         fields = ['role', 'name', 'plaintext', 'plaintext2']
 
     def clean(self):
-        validate_rsa_key(self.cleaned_data['private_key'])
+        if self.cleaned_data['plaintext']:
+            validate_rsa_key(self.cleaned_data['private_key'])
 
     def clean_plaintext2(self):
         plaintext = self.cleaned_data['plaintext']
@@ -88,26 +86,20 @@ class SecretFromCSVForm(forms.ModelForm):
 
 class SecretImportForm(BulkImportForm, BootstrapMixin):
     private_key = forms.CharField(widget=forms.HiddenInput())
-    csv = CSVDataField(csv_form=SecretFromCSVForm)
+    csv = CSVDataField(csv_form=SecretFromCSVForm, widget=forms.Textarea(attrs={'class': 'requires-private-key'}))
 
 
-class SecretBulkEditForm(forms.Form, BootstrapMixin):
+class SecretBulkEditForm(BulkEditForm, BootstrapMixin):
     pk = forms.ModelMultipleChoiceField(queryset=Secret.objects.all(), widget=forms.MultipleHiddenInput)
-    role = forms.ModelChoiceField(queryset=SecretRole.objects.all())
+    role = forms.ModelChoiceField(queryset=SecretRole.objects.all(), required=False)
     name = forms.CharField(max_length=100, required=False)
 
-
-class SecretBulkDeleteForm(ConfirmationForm):
-    pk = forms.ModelMultipleChoiceField(queryset=Secret.objects.all(), widget=forms.MultipleHiddenInput)
-
-
-def secret_role_choices():
-    role_choices = SecretRole.objects.annotate(secret_count=Count('secrets'))
-    return [(r.slug, '{} ({})'.format(r.name, r.secret_count)) for r in role_choices]
+    class Meta:
+        nullable_fields = ['name']
 
 
 class SecretFilterForm(forms.Form, BootstrapMixin):
-    role = forms.MultipleChoiceField(required=False, choices=secret_role_choices)
+    role = FilterChoiceField(queryset=SecretRole.objects.annotate(filter_count=Count('secrets')), to_field_name='slug')
 
 
 #

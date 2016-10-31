@@ -1,12 +1,15 @@
+from django.conf import settings
 from django.conf.urls import include, url
 from django.contrib import admin
 from django.views.defaults import page_not_found
 
-from views import home, docs, trigger_500
+from views import home, trigger_500, handle_500
 from users.views import login, logout
 
 
-urlpatterns = [
+handler500 = handle_500
+
+_patterns = [
 
     # Default page
     url(r'^$', home, name='home'),
@@ -20,6 +23,7 @@ urlpatterns = [
     url(r'^dcim/', include('dcim.urls', namespace='dcim')),
     url(r'^ipam/', include('ipam.urls', namespace='ipam')),
     url(r'^secrets/', include('secrets.urls', namespace='secrets')),
+    url(r'^tenancy/', include('tenancy.urls', namespace='tenancy')),
     url(r'^profile/', include('users.urls', namespace='users')),
 
     # API
@@ -27,12 +31,9 @@ urlpatterns = [
     url(r'^api/dcim/', include('dcim.api.urls', namespace='dcim-api')),
     url(r'^api/ipam/', include('ipam.api.urls', namespace='ipam-api')),
     url(r'^api/secrets/', include('secrets.api.urls', namespace='secrets-api')),
+    url(r'^api/tenancy/', include('tenancy.api.urls', namespace='tenancy-api')),
     url(r'^api/docs/', include('rest_framework_swagger.urls')),
     url(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework')),
-
-    # Dcoumentation
-    url(r'^docs/$', docs, kwargs={'path': 'index'}, name='docs_root'),
-    url(r'^docs/(?P<path>[\w-]+)/$', docs, name='docs'),
 
     # Error testing
     url(r'^404/$', page_not_found),
@@ -41,4 +42,9 @@ urlpatterns = [
     # Admin
     url(r'^admin/', include(admin.site.urls)),
 
+]
+
+# Prepend BASE_PATH
+urlpatterns = [
+    url(r'^{}'.format(settings.BASE_PATH), include(_patterns))
 ]

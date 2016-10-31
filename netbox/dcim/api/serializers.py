@@ -2,22 +2,26 @@ from rest_framework import serializers
 
 from ipam.models import IPAddress
 from dcim.models import (
-    ConsolePort, ConsolePortTemplate, ConsoleServerPort, ConsoleServerPortTemplate, Device, DeviceType, DeviceRole,
-    Interface, InterfaceConnection, InterfaceTemplate, Manufacturer, Platform, PowerOutlet, PowerOutletTemplate,
-    PowerPort, PowerPortTemplate, Rack, RackGroup, RACK_FACE_FRONT, RACK_FACE_REAR, Site,
+    ConsolePort, ConsolePortTemplate, ConsoleServerPort, ConsoleServerPortTemplate, Device, DeviceBay, DeviceType,
+    DeviceRole, Interface, InterfaceConnection, InterfaceTemplate, Manufacturer, Module, Platform, PowerOutlet,
+    PowerOutletTemplate, PowerPort, PowerPortTemplate, Rack, RackGroup, RackRole, RACK_FACE_FRONT, RACK_FACE_REAR, Site,
+    SUBDEVICE_ROLE_CHILD, SUBDEVICE_ROLE_PARENT,
 )
+from extras.api.serializers import CustomFieldSerializer
+from tenancy.api.serializers import TenantNestedSerializer
 
 
 #
 # Sites
 #
 
-class SiteSerializer(serializers.ModelSerializer):
+class SiteSerializer(CustomFieldSerializer, serializers.ModelSerializer):
+    tenant = TenantNestedSerializer()
 
     class Meta:
         model = Site
-        fields = ['id', 'name', 'slug', 'facility', 'asn', 'physical_address', 'shipping_address', 'comments',
-                  'count_prefixes', 'count_vlans', 'count_racks', 'count_devices', 'count_circuits']
+        fields = ['id', 'name', 'slug', 'tenant', 'facility', 'asn', 'physical_address', 'shipping_address', 'comments',
+                  'custom_fields', 'count_prefixes', 'count_vlans', 'count_racks', 'count_devices', 'count_circuits']
 
 
 class SiteNestedSerializer(SiteSerializer):
@@ -38,9 +42,26 @@ class RackGroupSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'slug', 'site']
 
 
-class RackGroupNestedSerializer(SiteSerializer):
+class RackGroupNestedSerializer(RackGroupSerializer):
 
     class Meta(SiteSerializer.Meta):
+        fields = ['id', 'name', 'slug']
+
+
+#
+# Rack roles
+#
+
+class RackRoleSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = RackRole
+        fields = ['id', 'name', 'slug', 'color']
+
+
+class RackRoleNestedSerializer(RackRoleSerializer):
+
+    class Meta(RackRoleSerializer.Meta):
         fields = ['id', 'name', 'slug']
 
 
@@ -49,13 +70,16 @@ class RackGroupNestedSerializer(SiteSerializer):
 #
 
 
-class RackSerializer(serializers.ModelSerializer):
+class RackSerializer(CustomFieldSerializer, serializers.ModelSerializer):
     site = SiteNestedSerializer()
     group = RackGroupNestedSerializer()
+    tenant = TenantNestedSerializer()
+    role = RackRoleNestedSerializer()
 
     class Meta:
         model = Rack
-        fields = ['id', 'name', 'facility_id', 'display_name', 'site', 'group', 'u_height', 'comments']
+        fields = ['id', 'name', 'facility_id', 'display_name', 'site', 'group', 'tenant', 'role', 'type', 'width',
+                  'u_height', 'comments', 'custom_fields']
 
 
 class RackNestedSerializer(RackSerializer):
@@ -69,8 +93,8 @@ class RackDetailSerializer(RackSerializer):
     rear_units = serializers.SerializerMethodField()
 
     class Meta(RackSerializer.Meta):
-        fields = ['id', 'name', 'facility_id', 'display_name', 'site', 'group', 'u_height', 'comments', 'front_units',
-                  'rear_units']
+        fields = ['id', 'name', 'facility_id', 'display_name', 'site', 'group', 'tenant', 'role', 'type', 'width',
+                  'u_height', 'comments', 'custom_fields', 'front_units', 'rear_units']
 
     def get_front_units(self, obj):
         units = obj.get_rack_units(face=RACK_FACE_FRONT)
@@ -108,11 +132,19 @@ class ManufacturerNestedSerializer(ManufacturerSerializer):
 
 class DeviceTypeSerializer(serializers.ModelSerializer):
     manufacturer = ManufacturerNestedSerializer()
+    subdevice_role = serializers.SerializerMethodField()
 
     class Meta:
         model = DeviceType
-        fields = ['id', 'manufacturer', 'model', 'slug', 'u_height', 'is_full_depth', 'is_console_server', 'is_pdu',
-                  'is_network_device']
+        fields = ['id', 'manufacturer', 'model', 'slug', 'part_number', 'u_height', 'is_full_depth',
+                  'is_console_server', 'is_pdu', 'is_network_device', 'subdevice_role']
+
+    def get_subdevice_role(self, obj):
+        return {
+            SUBDEVICE_ROLE_PARENT: 'parent',
+            SUBDEVICE_ROLE_CHILD: 'child',
+            None: None,
+        }[obj.subdevice_role]
 
 
 class DeviceTypeNestedSerializer(DeviceTypeSerializer):
@@ -164,9 +196,9 @@ class DeviceTypeDetailSerializer(DeviceTypeSerializer):
     interface_templates = InterfaceTemplateNestedSerializer(many=True, read_only=True)
 
     class Meta(DeviceTypeSerializer.Meta):
-        fields = ['id', 'manufacturer', 'model', 'slug', 'u_height', 'is_full_depth', 'is_console_server', 'is_pdu',
-                  'is_network_device', 'console_port_templates', 'cs_port_templates', 'power_port_templates',
-                  'power_outlet_templates', 'interface_templates']
+        fields = ['id', 'manufacturer', 'model', 'slug', 'part_number', 'u_height', 'is_full_depth',
+                  'is_console_server', 'is_pdu', 'is_network_device', 'console_port_templates', 'cs_port_templates',
+                  'power_port_templates', 'power_outlet_templates', 'interface_templates']
 
 
 #
@@ -215,22 +247,41 @@ class DeviceIPAddressNestedSerializer(serializers.ModelSerializer):
         fields = ['id', 'family', 'address']
 
 
-class DeviceSerializer(serializers.ModelSerializer):
+class DeviceSerializer(CustomFieldSerializer, serializers.ModelSerializer):
     device_type = DeviceTypeNestedSerializer()
     device_role = DeviceRoleNestedSerializer()
+    tenant = TenantNestedSerializer()
     platform = PlatformNestedSerializer()
     rack = RackNestedSerializer()
     primary_ip = DeviceIPAddressNestedSerializer()
+    primary_ip4 = DeviceIPAddressNestedSerializer()
+    primary_ip6 = DeviceIPAddressNestedSerializer()
+    parent_device = serializers.SerializerMethodField()
 
     class Meta:
         model = Device
-        fields = ['id', 'name', 'display_name', 'device_type', 'device_role', 'platform', 'serial', 'rack', 'position',
-                  'face', 'status', 'primary_ip', 'comments']
+        fields = ['id', 'name', 'display_name', 'device_type', 'device_role', 'tenant', 'platform', 'serial',
+                  'asset_tag', 'rack', 'position', 'face', 'parent_device', 'status', 'primary_ip', 'primary_ip4',
+                  'primary_ip6', 'comments', 'custom_fields']
+
+    def get_parent_device(self, obj):
+        try:
+            device_bay = obj.parent_bay
+        except DeviceBay.DoesNotExist:
+            return None
+        return {
+            'id': device_bay.device.pk,
+            'name': device_bay.device.name,
+            'device_bay': {
+                'id': device_bay.pk,
+                'name': device_bay.name,
+            }
+        }
 
 
-class DeviceNestedSerializer(DeviceSerializer):
+class DeviceNestedSerializer(serializers.ModelSerializer):
 
-    class Meta(DeviceSerializer.Meta):
+    class Meta:
         model = Device
         fields = ['id', 'name', 'display_name']
 
@@ -319,7 +370,7 @@ class InterfaceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Interface
-        fields = ['id', 'device', 'name', 'form_factor', 'mgmt_only', 'description', 'is_connected']
+        fields = ['id', 'device', 'name', 'form_factor', 'mac_address', 'mgmt_only', 'description', 'is_connected']
 
 
 class InterfaceNestedSerializer(InterfaceSerializer):
@@ -333,8 +384,53 @@ class InterfaceDetailSerializer(InterfaceSerializer):
     connected_interface = InterfaceSerializer(source='get_connected_interface')
 
     class Meta(InterfaceSerializer.Meta):
-        fields = ['id', 'device', 'name', 'form_factor', 'mgmt_only', 'description', 'is_connected',
+        fields = ['id', 'device', 'name', 'form_factor', 'mac_address', 'mgmt_only', 'description', 'is_connected',
                   'connected_interface']
+
+
+#
+# Device bays
+#
+
+class DeviceBaySerializer(serializers.ModelSerializer):
+    device = DeviceNestedSerializer()
+
+    class Meta:
+        model = DeviceBay
+        fields = ['id', 'device', 'name']
+
+
+class DeviceBayNestedSerializer(DeviceBaySerializer):
+    installed_device = DeviceNestedSerializer()
+
+    class Meta(DeviceBaySerializer.Meta):
+        fields = ['id', 'name', 'installed_device']
+
+
+class DeviceBayDetailSerializer(DeviceBaySerializer):
+    installed_device = DeviceNestedSerializer()
+
+    class Meta(DeviceBaySerializer.Meta):
+        fields = ['id', 'device', 'name', 'installed_device']
+
+
+#
+# Modules
+#
+
+class ModuleSerializer(serializers.ModelSerializer):
+    device = DeviceNestedSerializer()
+    manufacturer = ManufacturerNestedSerializer()
+
+    class Meta:
+        model = Module
+        fields = ['id', 'device', 'parent', 'name', 'manufacturer', 'part_id', 'serial', 'discovered']
+
+
+class ModuleNestedSerializer(ModuleSerializer):
+
+    class Meta(ModuleSerializer.Meta):
+        fields = ['id', 'device', 'parent', 'name']
 
 
 #

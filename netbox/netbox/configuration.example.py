@@ -52,6 +52,10 @@ EMAIL = {
 # are permitted to access most data in NetBox (excluding secrets) but not make any changes.
 LOGIN_REQUIRED = False
 
+# Base URL path if accessing NetBox within a directory. For example, if installed at http://example.com/netbox/, set:
+# BASE_PATH = 'netbox/'
+BASE_PATH = ''
+
 # Setting this to True will display a "maintenance mode" banner at the top of every page.
 MAINTENANCE_MODE = False
 
@@ -73,3 +77,16 @@ TIME_FORMAT = 'g:i a'
 SHORT_TIME_FORMAT = 'H:i:s'
 DATETIME_FORMAT = 'N j, Y g:i a'
 SHORT_DATETIME_FORMAT = 'Y-m-d H:i'
+
+# Optionally display a persistent banner at the top and/or bottom of every page. To display the same content in both
+# banners, define BANNER_TOP and set BANNER_BOTTOM = BANNER_TOP.
+BANNER_TOP = ''
+BANNER_BOTTOM = ''
+
+# When determining the primary IP address for a device, IPv6 is preferred over IPv4 by default. Set this to True to
+# prefer IPv4 instead.
+PREFER_IPV4 = False
+
+# Enforcement of unique IP space can be toggled on a per-VRF basis. To enforce unique IP space within the global table
+# (all prefixes and IP addresses not assigned to a VRF), set ENFORCE_GLOBAL_UNIQUE to True.
+ENFORCE_GLOBAL_UNIQUE = False
